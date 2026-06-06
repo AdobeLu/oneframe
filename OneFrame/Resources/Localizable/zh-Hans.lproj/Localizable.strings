@@ -1,0 +1,46 @@
+/* 简体中文 */
+
+"camera.photo" = "拍照";
+"camera.video" = "录像";
+"camera.flip" = "翻转";
+"camera.mosaic" = "打码";
+"camera.mosaic_done" = "完成打码";
+"camera.filter" = "滤镜";
+"camera.frame" = "画框";
+"camera.no_multicam" = "该设备不支持前后摄像头同时使用";
+
+"setting.title" = "设置";
+"setting.language" = "语言";
+"setting.remove_watermark" = "去除水印";
+"setting.restore_purchase" = "恢复购买";
+"setting.privacy_policy" = "隐私政策";
+"setting.about" = "关于";
+"setting.rate" = "给我们评分";
+
+"purchase.title" = "去除水印";
+"purchase.description" = "一次性购买，永久去除照片和视频上的 OneFrame 水印。";
+"purchase.buy" = "购买";
+"purchase.restoring" = "正在恢复购买...";
+"purchase.purchased" = "已购买";
+"purchase.failed" = "购买失败，请重试";
+
+"gallery.title" = "相册";
+"gallery.empty" = "还没有任何作品，快去拍摄吧！";
+"gallery.export_photo" = "保存到相册";
+"gallery.share" = "分享";
+"gallery.delete" = "删除";
+"gallery.delete_confirm" = "确定要删除这个文件吗？";
+
+"watermark.location_unknown" = "位置未知";
+"watermark.app_name" = "OneFrame";
+
+"about.title" = "关于";
+"about.version" = "版本";
+"about.developer" = "开发者";
+
+"privacy.title" = "隐私政策";
+
+"common.ok" = "确定";
+"common.cancel" = "取消";
+"common.confirm" = "确认";
+"common.done" = "完成";

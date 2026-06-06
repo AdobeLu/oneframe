@@ -15,11 +15,25 @@
 					<string>Default Configuration</string>
 					<key>UISceneDelegateClassName</key>
 					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
-					<key>UISceneStoryboardFile</key>
-					<string>Main</string>
 				</dict>
 			</array>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>OneFrame needs camera access to capture dual-camera photos and videos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OneFrame needs microphone access to record audio with your videos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>OneFrame needs photo library access to save your creations.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>OneFrame needs permission to save photos and videos to your album.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>OneFrame uses your location to add geotag watermarks to your photos and videos.</string>
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 </dict>
 </plist>

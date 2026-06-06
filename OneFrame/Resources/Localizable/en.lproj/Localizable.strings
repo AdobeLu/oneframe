@@ -1,0 +1,46 @@
+/* English */
+
+"camera.photo" = "Photo";
+"camera.video" = "Video";
+"camera.flip" = "Flip";
+"camera.mosaic" = "Mosaic";
+"camera.mosaic_done" = "Done";
+"camera.filter" = "Filter";
+"camera.frame" = "Frame";
+"camera.no_multicam" = "This device doesn't support dual camera";
+
+"setting.title" = "Settings";
+"setting.language" = "Language";
+"setting.remove_watermark" = "Remove Watermark";
+"setting.restore_purchase" = "Restore Purchase";
+"setting.privacy_policy" = "Privacy Policy";
+"setting.about" = "About";
+"setting.rate" = "Rate Us";
+
+"purchase.title" = "Remove Watermark";
+"purchase.description" = "One-time purchase to permanently remove the OneFrame watermark from your photos and videos.";
+"purchase.buy" = "Buy";
+"purchase.restoring" = "Restoring purchase...";
+"purchase.purchased" = "Purchased";
+"purchase.failed" = "Purchase failed, please try again";
+
+"gallery.title" = "Gallery";
+"gallery.empty" = "No media yet, start shooting!";
+"gallery.export_photo" = "Save to Album";
+"gallery.share" = "Share";
+"gallery.delete" = "Delete";
+"gallery.delete_confirm" = "Are you sure you want to delete this file?";
+
+"watermark.location_unknown" = "Location Unknown";
+"watermark.app_name" = "OneFrame";
+
+"about.title" = "About";
+"about.version" = "Version";
+"about.developer" = "Developer";
+
+"privacy.title" = "Privacy Policy";
+
+"common.ok" = "OK";
+"common.cancel" = "Cancel";
+"common.confirm" = "Confirm";
+"common.done" = "Done";
