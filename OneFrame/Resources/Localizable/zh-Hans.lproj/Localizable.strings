@@ -30,6 +30,13 @@
 "gallery.share" = "分享";
 "gallery.delete" = "删除";
 "gallery.delete_confirm" = "确定要删除这个文件吗？";
+"gallery.select" = "选择";
+"gallery.select_all" = "全选";
+"gallery.deselect_all" = "取消全选";
+"gallery.delete_selected" = "删除所选";
+"gallery.delete_selected_confirm" = "确定要删除所选的 %d 个文件吗？";
+"gallery.save_selected" = "保存到相册";
+"gallery.items_count" = "已选择 %d 项";
 
 "watermark.location_unknown" = "位置未知";
 "watermark.app_name" = "OneFrame";

@@ -84,6 +84,20 @@ final class MediaStorageManager {
         saveMetadata()
     }
 
+    /// 批量删除媒体
+    func deleteMediaBatch(_ entriesToDelete: [MediaEntry]) {
+        let ids = Set(entriesToDelete.map { $0.id })
+        for entry in entriesToDelete {
+            let directory = entry.type == .photo ? photosDirectory : videosDirectory
+            let originalURL = directory.appendingPathComponent(entry.fileName)
+            let thumbURL = directory.appendingPathComponent(entry.thumbFileName)
+            try? FileManager.default.removeItem(at: originalURL)
+            try? FileManager.default.removeItem(at: thumbURL)
+        }
+        entries.removeAll { ids.contains($0.id) }
+        saveMetadata()
+    }
+
     func originalURL(for entry: MediaEntry) -> URL {
         let directory = entry.type == .photo ? photosDirectory : videosDirectory
         return directory.appendingPathComponent(entry.fileName)
