@@ -3,10 +3,10 @@
 //  OneFrame
 //
 //  视频录制器 - AVAssetWriter 逐帧合成视频
+//  性能优化: pixelBufferPool 复用 + CPU 直写 CGImage → 零 GPU 开销
 //
 
 import AVFoundation
-import CoreImage
 import UIKit
 
 final class VideoRecorder {
@@ -27,7 +27,6 @@ final class VideoRecorder {
     private var recordStartDate: Date?
 
     private let writeQueue = DispatchQueue(label: "com.oneframe.video.write")
-    private let ciContext: CIContext
 
     // 输出路径
     private(set) var outputURL: URL?
@@ -36,9 +35,6 @@ final class VideoRecorder {
 
     init(size: CGSize) {
         self.outputSize = size
-        self.ciContext = CIContext(options: [
-            .workingColorSpace: NSNull()
-        ])
     }
 
     // MARK: - Public
@@ -73,7 +69,8 @@ final class VideoRecorder {
                 let pixelBufferAttributes: [String: Any] = [
                     kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                     kCVPixelBufferWidthKey as String: self.outputSize.width,
-                    kCVPixelBufferHeightKey as String: self.outputSize.height
+                    kCVPixelBufferHeightKey as String: self.outputSize.height,
+                    kCVPixelBufferIOSurfacePropertiesKey as String: [:]
                 ]
 
                 self.pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -103,7 +100,7 @@ final class VideoRecorder {
                 // ⚠️ startWriting() 初始化编码器，耗时 1-2 秒，必须在后台线程调用
                 writer.startWriting()
                 writer.startSession(atSourceTime: .zero)
-        
+
                 self.currentAudioTime = .zero
                 self.recordStartDate = Date()
                 self.isWriterReady = true
@@ -150,7 +147,7 @@ final class VideoRecorder {
         }
     }
 
-    /// 写入视频帧（调用线程同步执行，接收已烘焙的 CGImage 避免双重渲染）
+    /// 写入视频帧（调用线程同步执行，CPU 直写 pixelBuffer，零 GPU 路径）
     func appendFrame(_ cgImage: CGImage) {
         guard isWriting, isWriterReady,
               let adaptor = pixelBufferAdaptor,
@@ -163,20 +160,40 @@ final class VideoRecorder {
         let elapsed = Date().timeIntervalSince(recordStartDate ?? Date())
         let pts = CMTime(seconds: elapsed, preferredTimescale: 600)
 
+        // 从 adaptor 内置 pool 复用 pixelBuffer（零内存分配）
         var pixelBuffer: CVPixelBuffer?
-        CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            Int(outputSize.width),
-            Int(outputSize.height),
-            kCVPixelFormatType_32BGRA,
-            [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary,
-            &pixelBuffer
-        )
+        if let pool = adaptor.pixelBufferPool {
+            CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+        }
 
         guard let buffer = pixelBuffer else { return }
 
-        // CIImage(cgImage:) = 无惰性依赖，快速渲染
-        ciContext.render(CIImage(cgImage: cgImage), to: buffer)
+        // CPU 直写 CGImage 位图 → pixelBuffer（无 GPU 路径）
+        CVPixelBufferLockBaseAddress(buffer, [])
+
+        let cgWidth = CVPixelBufferGetWidth(buffer)
+        let cgHeight = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+
+        if let baseAddr = CVPixelBufferGetBaseAddress(buffer) {
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue
+                | CGImageAlphaInfo.premultipliedFirst.rawValue
+
+            if let ctx = CGContext(
+                data: baseAddr,
+                width: cgWidth,
+                height: cgHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            ) {
+                ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgWidth, height: cgHeight))
+            }
+        }
+
+        CVPixelBufferUnlockBaseAddress(buffer, [])
         adaptor.append(buffer, withPresentationTime: pts)
     }
 
