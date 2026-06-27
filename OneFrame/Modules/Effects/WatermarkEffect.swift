@@ -2,10 +2,10 @@
 //  WatermarkEffect.swift
 //  OneFrame
 //
-//  水印效果 - 叠加位置/天气/设备信息/App名称
+//  水印效果 - 左下角信息水印 + 右下角品牌名
+//  布局: 日期时间 | 经纬度(N/E) | 城市 · 天气 · 设备
 //
-//  性能优化: 水印文字在分钟级别才变化，避免每帧(~30fps)重新渲染 CPU 位图
-//  只在水印内容实际变化时才重新渲染，大幅降低 CPU 占用和发热
+//  性能优化: 水印文字每秒变化一次，内容不变时复用缓存位图，避免每帧重绘
 //
 
 import CoreImage
@@ -24,51 +24,53 @@ final class WatermarkEffect {
     /// 用户手动开关时间/地点/设备信息水印（免费开关）
     private var isInfoWatermarkHidden: Bool = false
 
-    /// 水印文字颜色
-    private let textColor = UIColor.white.withAlphaComponent(0.85)
-    private let shadowColor = UIColor.black.withAlphaComponent(0.5)
+    /// 文字颜色
+    private let textColor = UIColor.white
+    private let dimTextColor = UIColor.white.withAlphaComponent(0.82)
 
-    // MARK: - Cache (避免每帧重新渲染位图，这是相机发烫的主要原因)
+    // MARK: - Cache
 
     private var cachedWatermarkImage: CIImage?
     private var cachedCanvasSize: CGSize = .zero
-    private var cachedDateMinute: String = ""
-    private var cachedLocationString: String = ""
-    private var cachedWeatherString: String = ""
+    private var cachedDateStr: String = ""
+    private var cachedTimeStr: String = ""
+    private var cachedCoordinateStr: String = ""
+    private var cachedCityName: String = ""
+    private var cachedWeatherStr: String = ""
     private var cachedDeviceInfo: String = ""
     private var cachedAppName: String = ""
     private var cachedAppNameRemoved: Bool = false
     private var cachedInfoHidden: Bool = false
 
-    /// 复用 CIFilter 实例，避免每帧通过字符串查找重建
     private lazy var sourceOverFilter: CIFilter? = {
         CIFilter(name: "CISourceOverCompositing")
     }()
 
-    /// 复用 DateFormatter，避免每帧新建
     private let dateFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm:ss"  // 秒级精度，每秒刷新一次水印时间
+        f.dateFormat = "yyyy年MM月dd日"
+        return f
+    }()
+
+    private let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
         return f
     }()
 
     // MARK: - Public
 
-    /// 内购移除 App 名称水印（"同框相机"）- 付费功能
     func setAppNameWatermarkRemoved(_ removed: Bool) {
         isAppNameWatermarkRemoved = removed
         cachedWatermarkImage = nil
     }
 
-    /// 用户手动开关时间/地点/设备信息水印 - 免费开关
     func setInfoWatermarkHidden(_ hidden: Bool) {
         isInfoWatermarkHidden = hidden
         cachedWatermarkImage = nil
     }
 
-    /// 生成水印 CIImage 叠加到画面上
     func apply(to image: CIImage, canvasSize: CGSize) -> CIImage {
-        // 两个水印都关闭时跳过渲染
         if isAppNameWatermarkRemoved && isInfoWatermarkHidden {
             return image
         }
@@ -76,9 +78,7 @@ final class WatermarkEffect {
         let watermarkImage = getCachedWatermark(canvasSize: canvasSize)
         guard let overlay = watermarkImage else { return image }
 
-        guard let compositor = sourceOverFilter else {
-            return image
-        }
+        guard let compositor = sourceOverFilter else { return image }
         compositor.setValue(overlay, forKey: kCIInputImageKey)
         compositor.setValue(image, forKey: kCIInputBackgroundImageKey)
 
@@ -87,46 +87,49 @@ final class WatermarkEffect {
 
     // MARK: - Caching Logic
 
-    /// 获取缓存的水印图像，仅在内容变化时重新渲染
     private func getCachedWatermark(canvasSize: CGSize) -> CIImage? {
-        // canvasSize 变化时强制重新渲染
         let sizeChanged = canvasSize != cachedCanvasSize
 
-        // 收集当前水印信息
-        let dateStr = dateFormatter.string(from: Date())
-        let locationStr = LocationService.shared.locationInfoString
+        let now = Date()
+        let dateStr = dateFormatter.string(from: now)
+        let timeStr = timeFormatter.string(from: now)
+        let coordinateStr = LocationService.shared.coordinateString
+        let cityName = LocationService.shared.cityName
         let weatherStr = WeatherService.shared.currentWeather ?? ""
         let deviceStr = "\(DeviceInfoService.shared.modelName) | \(DeviceInfoService.shared.fullSystemInfo)"
         let currentAppName = appName
 
-        // 检查是否需要重新渲染
         let contentChanged = sizeChanged
-            || dateStr != cachedDateMinute
-            || locationStr != cachedLocationString
-            || weatherStr != cachedWeatherString
+            || dateStr != cachedDateStr
+            || timeStr != cachedTimeStr
+            || coordinateStr != cachedCoordinateStr
+            || cityName != cachedCityName
+            || weatherStr != cachedWeatherStr
             || deviceStr != cachedDeviceInfo
             || currentAppName != cachedAppName
             || isAppNameWatermarkRemoved != cachedAppNameRemoved
             || isInfoWatermarkHidden != cachedInfoHidden
 
-        // 内容没变化且有缓存 → 直接返回缓存（避免每帧重绘，大幅降低 CPU/发热）
         if !contentChanged, let cached = cachedWatermarkImage {
             return cached
         }
 
-        // 内容变化了（或首次调用），重新渲染
         let newWatermark = renderWatermark(
             canvasSize: canvasSize,
             dateStr: dateStr,
-            locationStr: locationStr,
+            timeStr: timeStr,
+            coordinateStr: coordinateStr,
+            cityName: cityName,
             weatherStr: weatherStr,
             deviceStr: deviceStr
         )
         cachedWatermarkImage = newWatermark
         cachedCanvasSize = canvasSize
-        cachedDateMinute = dateStr
-        cachedLocationString = locationStr
-        cachedWeatherString = weatherStr
+        cachedDateStr = dateStr
+        cachedTimeStr = timeStr
+        cachedCoordinateStr = coordinateStr
+        cachedCityName = cityName
+        cachedWeatherStr = weatherStr
         cachedDeviceInfo = deviceStr
         cachedAppName = currentAppName
         cachedAppNameRemoved = isAppNameWatermarkRemoved
@@ -134,89 +137,155 @@ final class WatermarkEffect {
         return newWatermark
     }
 
-    // MARK: - Private Rendering
+    // MARK: - Rendering
 
-    private func renderWatermark(canvasSize: CGSize, dateStr: String, locationStr: String, weatherStr: String, deviceStr: String) -> CIImage? {
+    private func renderWatermark(
+        canvasSize: CGSize,
+        dateStr: String,
+        timeStr: String,
+        coordinateStr: String,
+        cityName: String,
+        weatherStr: String,
+        deviceStr: String
+    ) -> CIImage? {
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1.0  // canvasSize 已是像素级，不需要再乘屏幕 scale
+        format.scale = 1.0
         let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
-        let uiImage = renderer.image { ctx in
-            let context = ctx.cgContext
+        let uiImage = renderer.image { rc in
+            let ctx = rc.cgContext
 
-            // 信息文字 (左下角) - 用户手动开关控制（免费功能）
             if !isInfoWatermarkHidden {
-                var lines: [String] = [dateStr]
-
-                if !locationStr.isEmpty && locationStr != OWLocalized("watermark.location_unknown") {
-                    lines.append(locationStr)
-                }
-                if !weatherStr.isEmpty {
-                    lines.append(weatherStr)
-                }
-                lines.append(deviceStr)
-
-                renderInfoLines(lines, context: context, canvasSize: canvasSize)
+                renderInfoBlock(
+                    context: ctx,
+                    canvasSize: canvasSize,
+                    dateStr: dateStr,
+                    timeStr: timeStr,
+                    coordinateStr: coordinateStr,
+                    cityName: cityName,
+                    weatherStr: weatherStr,
+                    deviceStr: deviceStr
+                )
             }
 
-            // App 名称水印（右下角半透明）- 内购付费移除
             if !isAppNameWatermarkRemoved {
-                renderAppNameWatermark(context: context, canvasSize: canvasSize)
+                renderAppNameWatermark(context: ctx, canvasSize: canvasSize)
             }
         }
-
         return CIImage(image: uiImage)
     }
 
+    // MARK: - 左下角信息块
+
+    private func renderInfoBlock(
+        context: CGContext,
+        canvasSize: CGSize,
+        dateStr: String,
+        timeStr: String,
+        coordinateStr: String,
+        cityName: String,
+        weatherStr: String,
+        deviceStr: String
+    ) {
+        let margin: CGFloat = max(canvasSize.width * 0.045, 20)
+        let bottomMargin: CGFloat = max(canvasSize.height * 0.08, 50)
+
+        // 字体大小 (相对画布宽度自适应)
+        let dateFontSize: CGFloat = max(canvasSize.width * 0.055, 28)
+        let timeFontSize: CGFloat = max(canvasSize.width * 0.036, 18)
+        let coordFontSize: CGFloat = max(canvasSize.width * 0.030, 15)
+        let detailFontSize: CGFloat = max(canvasSize.width * 0.026, 13)
+
+        // 阴影
+        let shadow = NSShadow()
+        shadow.shadowColor = UIColor.black.withAlphaComponent(0.55)
+        shadow.shadowOffset = CGSize(width: 0.5, height: 0.5)
+        shadow.shadowBlurRadius = 3
+
+        // --- 第1行: 日期 (粗体) + 时间 (等宽) ---
+        let dateFont = UIFont.boldSystemFont(ofSize: dateFontSize)
+        let dateAttrs: [NSAttributedString.Key: Any] = [
+            .font: dateFont,
+            .foregroundColor: textColor,
+            .shadow: shadow
+        ]
+        let dateStr_size = dateStr.size(withAttributes: dateAttrs)
+
+        let timeFont = UIFont.monospacedDigitSystemFont(ofSize: timeFontSize, weight: .medium)
+        let timeAttrs: [NSAttributedString.Key: Any] = [
+            .font: timeFont,
+            .foregroundColor: dimTextColor,
+            .shadow: shadow
+        ]
+        let timeStr_size = timeStr.size(withAttributes: timeAttrs)
+
+        let line1Height = max(dateStr_size.height, timeStr_size.height)
+        let spacing: CGFloat = margin * 0.2
+        let dateX = margin
+        let dateY_base = canvasSize.height - bottomMargin - line1Height - spacing * 2
+
+        dateStr.draw(at: CGPoint(x: dateX, y: dateY_base), withAttributes: dateAttrs)
+
+        let timeX = dateX + dateStr_size.width + margin * 0.3
+        let timeY = dateY_base + dateStr_size.height - timeStr_size.height
+        timeStr.draw(at: CGPoint(x: timeX, y: timeY), withAttributes: timeAttrs)
+
+        // --- 第2行: 经纬度 (N/E 格式) ---
+        var line2Y = dateY_base + line1Height + spacing
+
+        if !coordinateStr.isEmpty {
+            let coordFont = UIFont.monospacedDigitSystemFont(ofSize: coordFontSize, weight: .regular)
+            let coordAttrs: [NSAttributedString.Key: Any] = [
+                .font: coordFont,
+                .foregroundColor: dimTextColor,
+                .shadow: shadow
+            ]
+            coordinateStr.draw(at: CGPoint(x: dateX, y: line2Y), withAttributes: coordAttrs)
+            let coordHeight = coordinateStr.size(withAttributes: coordAttrs).height
+            line2Y += coordHeight + spacing * 0.5
+        }
+
+        // --- 第3行: 城市 · 天气 · 设备 ---
+        var detailParts: [String] = []
+        if !cityName.isEmpty {
+            detailParts.append(cityName)
+        }
+        if !weatherStr.isEmpty {
+            detailParts.append(weatherStr)
+        }
+        detailParts.append(deviceStr)
+        let detailText = detailParts.joined(separator: "  ·  ")
+
+        let detailFont = UIFont.systemFont(ofSize: detailFontSize, weight: .regular)
+        let detailAttrs: [NSAttributedString.Key: Any] = [
+            .font: detailFont,
+            .foregroundColor: dimTextColor.withAlphaComponent(0.75),
+            .shadow: shadow
+        ]
+        detailText.draw(at: CGPoint(x: dateX, y: line2Y), withAttributes: detailAttrs)
+    }
+
+    // MARK: - 品牌水印（右下角）
+
     private func renderAppNameWatermark(context: CGContext, canvasSize: CGSize) {
-        let fontSize: CGFloat = min(canvasSize.width * 0.1, 45)
+        let fontSize: CGFloat = min(canvasSize.width * 0.12, 56)
         let font = UIFont.boldSystemFont(ofSize: fontSize)
 
         let shadow = NSShadow()
-        shadow.shadowColor = shadowColor
-        shadow.shadowOffset = CGSize(width: 1, height: 1)
-        shadow.shadowBlurRadius = 4
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: UIColor.white.withAlphaComponent(0.6),
-            .shadow: shadow,
-        ]
-
-        let textSize = appName.size(withAttributes: attributes)
-        let margin: CGFloat = 24
-        // UIKit 坐标系原点在左上角，y 向下
-        let x = canvasSize.width - textSize.width - margin
-        let y = canvasSize.height - textSize.height - margin
-
-        appName.draw(at: CGPoint(x: x, y: y), withAttributes: attributes)
-    }
-
-    private func renderInfoLines(_ lines: [String], context: CGContext, canvasSize: CGSize) {
-        let fontSize: CGFloat = min(canvasSize.width * 0.04, 30)
-        let font = UIFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .medium)
-
-        let shadow = NSShadow()
-        shadow.shadowColor = shadowColor
-        shadow.shadowOffset = CGSize(width: 1, height: 1)
+        shadow.shadowColor = UIColor.black.withAlphaComponent(0.4)
+        shadow.shadowOffset = CGSize(width: 0.5, height: 0.5)
         shadow.shadowBlurRadius = 3
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: textColor,
+            .foregroundColor: UIColor.white.withAlphaComponent(0.55),
             .shadow: shadow
         ]
 
-        let margin: CGFloat = 16
-        let lineHeight = fontSize * 1.5
-        let totalHeight = lineHeight * CGFloat(lines.count)
-        let startY = canvasSize.height - totalHeight - margin
+        let textSize = appName.size(withAttributes: attributes)
+        let margin: CGFloat = 22
+        let x = canvasSize.width - textSize.width - margin
+        let y = canvasSize.height - textSize.height - margin * 1.8
 
-        for (index, line) in lines.enumerated() {
-            let y = startY + lineHeight * CGFloat(index)
-            line.draw(
-                at: CGPoint(x: margin, y: y),
-                withAttributes: attributes
-            )
-        }
+        appName.draw(at: CGPoint(x: x, y: y), withAttributes: attributes)
     }
 }

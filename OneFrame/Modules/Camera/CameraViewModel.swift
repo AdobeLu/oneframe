@@ -43,7 +43,6 @@ final class CameraViewModel {
 
     // 录制相关
     private var videoRecorder: VideoRecorder?
-    private var audioSampleBuffers: [CMSampleBuffer] = []
     private var currentRecordingURL: URL?
 
     // MARK: - Callbacks
@@ -117,20 +116,18 @@ final class CameraViewModel {
 
         latestProcessedImage = processed
 
-        // 使用共享 CIContext 生成 UI 用的 UIImage（避免每帧创建 CIContext）
+        // 使用共享 CIContext 渲染一次 → 同时给预览和录像（避免双重 GPU 渲染）
         if let cgImage = ciContext.createCGImage(processed, from: processed.extent) {
             let uiImage = UIImage(cgImage: cgImage, scale: UIScreen.main.scale, orientation: .up)
-            // 缓存已渲染的 UIImage，脱离 CVPixelBuffer 依赖
-            // 这样快速拍照时不会因 CVPixelBuffer 被回收而渲染出黑屏
             latestRenderedImage = uiImage
             DispatchQueue.main.async { [weak self] in
                 self?.onProcessedFrameUpdate?(uiImage)
             }
-        }
 
-        // 如果正在录制，写入帧
-        if isRecording {
-            videoRecorder?.appendFrame(processed)
+            // 复用已渲染的 CGImage 写入录像，不再二次渲染
+            if isRecording {
+                videoRecorder?.appendFrame(cgImage)
+            }
         }
     }
 
@@ -153,19 +150,32 @@ final class CameraViewModel {
 
     // MARK: - Video Recording
 
-    func startRecording() throws {
+    func startRecording() {
         guard !isRecording else { return }
 
-        videoRecorder = VideoRecorder(
-            size: pipeline.compositor.canvasSize
-        )
+        let recorder = VideoRecorder(size: pipeline.compositor.canvasSize)
+        videoRecorder = recorder
 
-        try videoRecorder?.startWriting()
+        // 立即更新 UI 与状态，不等 writer 初始化（否则快门环延迟 1-2s 才变红）
         isRecording = true
-        audioSampleBuffers.removeAll()
-
         DispatchQueue.main.async { [weak self] in
             self?.onRecordingStateChange?(true)
+        }
+
+        // 异步启动 writer（H.264 编码器初始化耗时 1-2s，后台完成）
+        // isWriterReady 为 false 期间 appendFrame 会安全丢弃帧
+        recorder.startWriting { [weak self] result in
+            switch result {
+            case .success:
+                break // writer 就绪，isWriterReady 已被置为 true
+            case .failure(let error):
+                print("VideoRecorder start failed: \(error)")
+                self?.isRecording = false
+                self?.videoRecorder = nil
+                DispatchQueue.main.async {
+                    self?.onRecordingStateChange?(false)
+                }
+            }
         }
     }
 
@@ -184,6 +194,11 @@ final class CameraViewModel {
             self?.currentRecordingURL = url
             completion(url)
         }
+    }
+
+    /// 转发音频样本到 VideoRecorder
+    func appendAudio(_ sampleBuffer: CMSampleBuffer) {
+        videoRecorder?.appendAudio(sampleBuffer)
     }
 
     // MARK: - Effects Control

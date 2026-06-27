@@ -24,6 +24,11 @@ final class CameraViewController: UIViewController {
     private let pipOverlayView = PIPOverlayView()
     private let processedPreview = UIImageView()
 
+    // 录像计时器
+    private let recordTimerLabel = UILabel()
+    private var recordTimer: Timer?
+    private var recordStartTime: Date?
+
     // 控制按钮
     private let shutterRingView = UIView()
     private let shutterButton = UIButton(type: .system)
@@ -40,7 +45,17 @@ final class CameraViewController: UIViewController {
     ])
 
     private var isPhotoMode = true {
-        didSet { updateShutterButtonAppearance() }
+        didSet {
+            // 从录像模式切回拍照时，如果正在录像则自动停止
+            if isPhotoMode && viewModel.isRecording {
+                viewModel.stopRecording { url in
+                    if let url = url {
+                        print("Video saved at: \(url)")
+                    }
+                }
+            }
+            updateShutterButtonAppearance()
+        }
     }
 
     // 帧缓存
@@ -65,6 +80,12 @@ final class CameraViewController: UIViewController {
     private var previewHeightConstraint: NSLayoutConstraint?
     private var previewCenterXConstraint: NSLayoutConstraint?
     private var previewWidthConstraint: NSLayoutConstraint?
+
+    // 快门按钮动态约束
+    private var ringWidthConstraint: NSLayoutConstraint?
+    private var ringHeightConstraint: NSLayoutConstraint?
+    private var btnWidthConstraint: NSLayoutConstraint?
+    private var btnHeightConstraint: NSLayoutConstraint?
 
     // MARK: - Init
 
@@ -151,6 +172,11 @@ final class CameraViewController: UIViewController {
         captureSessionManager.onMacroStateChange = { [weak self] state in
             self?.updateMacroButtonAppearance(for: state)
         }
+
+        // 音频样本转发到 ViewModel → VideoRecorder
+        captureSessionManager.onAudioSampleBuffer = { [weak self] sampleBuffer in
+            self?.viewModel.appendAudio(sampleBuffer)
+        }
     }
 
     private func setupViewModel() {
@@ -228,6 +254,24 @@ final class CameraViewController: UIViewController {
             topBar.heightAnchor.constraint(equalToConstant: 100)
         ])
 
+        // MARK: 录像计时器（右上角，系统相机风格：红底白字 00:00）
+        recordTimerLabel.text = "00:00"
+        recordTimerLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        recordTimerLabel.textColor = .white
+        recordTimerLabel.backgroundColor = UIColor.red.withAlphaComponent(0.85)
+        recordTimerLabel.layer.cornerRadius = 4
+        recordTimerLabel.clipsToBounds = true
+        recordTimerLabel.textAlignment = .center
+        recordTimerLabel.isHidden = true
+        topBar.addSubview(recordTimerLabel)
+        recordTimerLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            recordTimerLabel.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
+            recordTimerLabel.bottomAnchor.constraint(equalTo: topBar.bottomAnchor, constant: -12),
+            recordTimerLabel.widthAnchor.constraint(equalToConstant: 64),
+            recordTimerLabel.heightAnchor.constraint(equalToConstant: 24)
+        ])
+
         // MARK: 底部控制栏（纯黑）
         bottomBar.backgroundColor = .black
         view.addSubview(bottomBar)
@@ -277,16 +321,21 @@ final class CameraViewController: UIViewController {
         shutterButton.addTarget(self, action: #selector(shutterTapped), for: .touchUpInside)
         bottomBar.addSubview(shutterButton)
         shutterButton.translatesAutoresizingMaskIntoConstraints = false
+        ringWidthConstraint = shutterRingView.widthAnchor.constraint(equalToConstant: 80)
+        ringHeightConstraint = shutterRingView.heightAnchor.constraint(equalToConstant: 80)
+        btnWidthConstraint = shutterButton.widthAnchor.constraint(equalToConstant: 64)
+        btnHeightConstraint = shutterButton.heightAnchor.constraint(equalToConstant: 64)
+
         NSLayoutConstraint.activate([
             shutterRingView.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
             shutterRingView.bottomAnchor.constraint(equalTo: modeSegment.topAnchor, constant: -20),
-            shutterRingView.widthAnchor.constraint(equalToConstant: 80),
-            shutterRingView.heightAnchor.constraint(equalToConstant: 80),
+            ringWidthConstraint!,
+            ringHeightConstraint!,
 
             shutterButton.centerXAnchor.constraint(equalTo: shutterRingView.centerXAnchor),
             shutterButton.centerYAnchor.constraint(equalTo: shutterRingView.centerYAnchor),
-            shutterButton.widthAnchor.constraint(equalToConstant: 64),
-            shutterButton.heightAnchor.constraint(equalToConstant: 64),
+            btnWidthConstraint!,
+            btnHeightConstraint!,
         ])
 
         // MARK: 功能按钮（滤镜/画框/切换后摄）统一配置
@@ -427,30 +476,27 @@ final class CameraViewController: UIViewController {
     }
 
     private func updateShutterButtonAppearance() {
-        let innerSize: CGFloat = isPhotoMode ? 64 : 30
-        let innerRadius: CGFloat = isPhotoMode ? 32 : 8
-        let ringRadius: CGFloat = isPhotoMode ? 40 : 8
-        let ringSize: CGFloat = isPhotoMode ? 80 : 34
+        // 与系统相机一致: 外环始终圆形，录像时内按钮缩小为红色小圆点
+        let innerSize: CGFloat = isPhotoMode ? 64 : 26
+        let innerRadius: CGFloat = innerSize / 2
+        let ringRadius: CGFloat = 40
+        let ringSize: CGFloat = 80
 
         UIView.animate(withDuration: 0.25) {
-            self.shutterButton.backgroundColor = self.isPhotoMode ? .white : .red
+            // 录像模式默认白色，仅录制中变红
+            let showRed = !self.isPhotoMode && self.viewModel.isRecording
+            self.shutterButton.backgroundColor = showRed ? .red : .white
             self.shutterButton.layer.cornerRadius = innerRadius
 
             self.shutterRingView.layer.cornerRadius = ringRadius
-            self.shutterRingView.layer.borderColor = self.isPhotoMode
-                ? UIColor.white.cgColor
-                : UIColor.red.cgColor
+            self.shutterRingView.layer.borderColor = showRed
+                ? UIColor.red.cgColor
+                : UIColor.white.cgColor
 
-            // 更新约束
-            if let ringWidth = self.bottomBar.constraints.first(where: { ($0.firstItem as? UIView) == self.shutterRingView && $0.firstAttribute == .width }),
-               let ringHeight = self.bottomBar.constraints.first(where: { ($0.firstItem as? UIView) == self.shutterRingView && $0.firstAttribute == .height }),
-               let btnWidth = self.bottomBar.constraints.first(where: { ($0.firstItem as? UIView) == self.shutterButton && $0.firstAttribute == .width }),
-               let btnHeight = self.bottomBar.constraints.first(where: { ($0.firstItem as? UIView) == self.shutterButton && $0.firstAttribute == .height }) {
-                ringWidth.constant = ringSize
-                ringHeight.constant = ringSize
-                btnWidth.constant = innerSize
-                btnHeight.constant = innerSize
-            }
+            self.ringWidthConstraint?.constant = ringSize
+            self.ringHeightConstraint?.constant = ringSize
+            self.btnWidthConstraint?.constant = innerSize
+            self.btnHeightConstraint?.constant = innerSize
             self.bottomBar.layoutIfNeeded()
         }
     }
@@ -470,11 +516,32 @@ final class CameraViewController: UIViewController {
     }
 
     private func updateRecordingUI(_ isRecording: Bool) {
-        // 录制状态通过 updateShutterButtonAppearance 的 .red 色来体现
-        // ringView 在录像时变红
+        // ringView + 内按钮在录像时变红
         shutterRingView.layer.borderColor = isRecording
             ? UIColor.red.cgColor
             : UIColor.white.cgColor
+        shutterButton.backgroundColor = isRecording ? .red : .white
+
+        // 录像计时器
+        if isRecording {
+            recordStartTime = Date()
+            recordTimerLabel.isHidden = false
+            recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                guard let self = self, let start = self.recordStartTime else { return }
+                let elapsed = Date().timeIntervalSince(start)
+                let h = Int(elapsed) / 3600
+                let m = (Int(elapsed) % 3600) / 60
+                let s = Int(elapsed) % 60
+                self.recordTimerLabel.text = h > 0
+                    ? String(format: "%d:%02d:%02d", h, m, s)
+                    : String(format: "%02d:%02d", m, s)
+            }
+        } else {
+            recordTimer?.invalidate()
+            recordTimer = nil
+            recordStartTime = nil
+            recordTimerLabel.isHidden = true
+        }
     }
 
     /// 根据固定 3:4 比例调整取景框位置和高度
@@ -630,13 +697,7 @@ final class CameraViewController: UIViewController {
                 }
             }
         } else {
-            do {
-                try viewModel.startRecording()
-            } catch {
-                let alert = UIAlertController(title: nil, message: "Failed to start recording", preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: OWLocalized("common.ok"), style: .default))
-                present(alert, animated: true)
-            }
+            viewModel.startRecording()
         }
     }
 

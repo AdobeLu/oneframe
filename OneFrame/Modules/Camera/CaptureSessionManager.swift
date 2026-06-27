@@ -302,7 +302,7 @@ final class CaptureSessionManager: NSObject {
 
                 let output = AVCaptureVideoDataOutput()
                 output.videoSettings = [
-                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                 ]
                 output.setSampleBufferDelegate(self, queue: backVideoQueue)
                 // 当渲染管线来不及处理时，自动丢弃积压的旧帧（防止掉帧雪崩）
@@ -331,7 +331,7 @@ final class CaptureSessionManager: NSObject {
 
                     let output = AVCaptureVideoDataOutput()
                     output.videoSettings = [
-                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                     ]
                     output.setSampleBufferDelegate(self, queue: backVideoQueue)
                     output.alwaysDiscardsLateVideoFrames = true
@@ -373,7 +373,7 @@ final class CaptureSessionManager: NSObject {
 
                     let output = AVCaptureVideoDataOutput()
                     output.videoSettings = [
-                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                     ]
                     output.setSampleBufferDelegate(self, queue: frontVideoQueue)
                     output.alwaysDiscardsLateVideoFrames = true

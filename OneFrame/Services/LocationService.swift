@@ -18,6 +18,22 @@ final class LocationService: NSObject {
     private(set) var currentPlacemark: CLPlacemark?
     private var updateHandler: ((CLLocation?, CLPlacemark?) -> Void)?
 
+    /// 经纬度带 N/S E/W 后缀 (如 "31.2304° N, 121.4737° E")
+    var coordinateString: String {
+        guard let location = currentLocation else { return "" }
+        let lat = abs(location.coordinate.latitude)
+        let lon = abs(location.coordinate.longitude)
+        let latDir = location.coordinate.latitude >= 0 ? "N" : "S"
+        let lonDir = location.coordinate.longitude >= 0 ? "E" : "W"
+        return String(format: "%.4f° %@, %.4f° %@", lat, latDir, lon, lonDir)
+    }
+
+    /// 城市名称 (如 "上海")
+    var cityName: String {
+        guard let placemark = currentPlacemark else { return "" }
+        return [placemark.locality, placemark.subLocality].compactMap { $0 }.joined(separator: " ")
+    }
+
     var locationInfoString: String {
         guard let location = currentLocation else {
             return OWLocalized("watermark.location_unknown")
@@ -28,11 +44,9 @@ final class LocationService: NSObject {
 
         var result = "\(lat), \(lon)"
 
-        if let placemark = currentPlacemark {
-            let parts = [placemark.locality, placemark.subLocality].compactMap { $0 }
-            if !parts.isEmpty {
-                result += " | " + parts.joined(separator: " ")
-            }
+        let city = cityName
+        if !city.isEmpty {
+            result += " | " + city
         }
 
         return result

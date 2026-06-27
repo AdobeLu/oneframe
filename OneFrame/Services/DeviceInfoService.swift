@@ -42,6 +42,11 @@ final class DeviceInfoService {
 
     private func mapToDeviceName(identifier: String) -> String {
         let deviceMap: [String: String] = [
+            // iPhone 16 series
+            "iPhone17,1": "iPhone 16 Pro",
+            "iPhone17,2": "iPhone 16 Pro Max",
+            "iPhone17,3": "iPhone 16",
+            "iPhone17,4": "iPhone 16 Plus",
             // iPhone 15 series
             "iPhone15,4": "iPhone 15",
             "iPhone15,5": "iPhone 15 Plus",
@@ -80,6 +85,23 @@ final class DeviceInfoService {
             "x86_64": "Simulator",
             "arm64": "Simulator"
         ]
-        return deviceMap[identifier] ?? identifier
+
+        // 已知设备 → 直接返回友好名称
+        if let name = deviceMap[identifier] {
+            return name
+        }
+
+        // 未知设备智能兜底: 按设备类型返回通用名称，不再暴露原始标识符
+        if identifier.hasPrefix("iPhone") {
+            return "iPhone"
+        }
+        if identifier.hasPrefix("iPad") {
+            return "iPad"
+        }
+        if identifier.hasPrefix("iPod") {
+            return "iPod touch"
+        }
+        // 真机但完全无法识别时，用 UIDevice 的系统名称兜底
+        return UIDevice.current.model
     }
 }
