@@ -8,6 +8,8 @@
 "camera.filter" = "滤镜";
 "camera.frame" = "画框";
 "camera.no_multicam" = "该设备不支持前后摄像头同时使用";
+"camera.unavailable" = "摄像头暂时不可用\n请关闭其他使用摄像头的应用后重试";
+"camera.error" = "摄像头错误";
 
 "setting.title" = "设置";
 "setting.language" = "语言";

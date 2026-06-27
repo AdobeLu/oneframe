@@ -28,6 +28,24 @@ final class Compositor {
         size: CGSize(width: 0.30, height: 0.40)
     )
 
+    // MARK: - Reusable CIFilters (避免每帧通过字符串查找重建)
+
+    private lazy var sourceOverFilter: CIFilter? = {
+        CIFilter(name: "CISourceOverCompositing")
+    }()
+
+    private lazy var blendWithMaskFilter: CIFilter? = {
+        CIFilter(name: "CIBlendWithAlphaMask")
+    }()
+
+    private lazy var roundedRectGenerator: CIFilter? = {
+        CIFilter(name: "CIRoundedRectangleGenerator")
+    }()
+
+    private lazy var lanczosScaleFilter: CIFilter? = {
+        CIFilter(name: "CILanczosScaleTransform")
+    }()
+
     // MARK: - Init
 
     init(canvasSize: CGSize = CGSize(width: 1080, height: 1920)) {
@@ -49,8 +67,8 @@ final class Compositor {
     ) -> CIImage {
         let cfg = config ?? pipConfig
 
-        // 1. 背景 AspectFill 到画布，居中裁剪
-        let scaledBackground = background.scaledToFill(size: canvasSize)
+        // 1. 背景 AspectFill 到画布，居中裁剪（复用 CIFilter 实例）
+        let scaledBackground = background.scaledToFill(size: canvasSize, scaleFilter: lanczosScaleFilter)
 
         // 前景为空时直接返回背景（PIP 关闭）
         guard let foreground = foreground else {
@@ -63,7 +81,7 @@ final class Compositor {
         let pipSize = CGSize(width: pipWidth, height: pipHeight)
 
         // 3. 前景缩放到 PIP 尺寸（AspectFill 居中裁剪）
-        let scaledForeground = foreground.scaledToFill(size: pipSize)
+        let scaledForeground = foreground.scaledToFill(size: pipSize, scaleFilter: lanczosScaleFilter)
 
         // 4. PIP 位置（从归一化转实际像素）
         //    position 表示 CIImage 坐标系中的左上角 (y-up, 原点左下)
@@ -88,28 +106,30 @@ final class Compositor {
             by: CGAffineTransform(translationX: pipOrigin.x, y: pipOrigin.y)
         )
 
-        // 7. 合成
-        guard let compositor = CIFilter(name: "CISourceOverCompositing") else {
+        // 7. 合成（复用 CIFilter 实例，避免每帧字符串查找）
+        guard let compositorFilter = sourceOverFilter else {
             return scaledBackground
         }
 
-        compositor.setValue(movedForeground, forKey: kCIInputImageKey)
-        compositor.setValue(scaledBackground, forKey: kCIInputBackgroundImageKey)
+        compositorFilter.setValue(movedForeground, forKey: kCIInputImageKey)
+        compositorFilter.setValue(scaledBackground, forKey: kCIInputBackgroundImageKey)
 
-        return compositor.outputImage?.cropped(to: CGRect(origin: .zero, size: canvasSize)) ?? scaledBackground
+        return compositorFilter.outputImage?.cropped(to: CGRect(origin: .zero, size: canvasSize)) ?? scaledBackground
     }
 
     // MARK: - Private
 
     private func applyCornerRadius(to image: CIImage, radius: CGFloat, size: CGSize) -> CIImage {
-        // 使用圆形遮罩实现圆角
-        let maskGenerator = CIFilter(name: "CIRoundedRectangleGenerator")!
+        // 使用圆形遮罩实现圆角（复用 CIFilter 实例）
+        guard let maskGenerator = roundedRectGenerator,
+              let blendFilter = blendWithMaskFilter else {
+            return image
+        }
         maskGenerator.setValue(CIVector(x: 0, y: 0, z: size.width, w: size.height), forKey: "inputExtent")
         maskGenerator.setValue(radius, forKey: "inputRadius")
 
         guard let maskImage = maskGenerator.outputImage else { return image }
 
-        let blendFilter = CIFilter(name: "CIBlendWithAlphaMask")!
         blendFilter.setValue(image, forKey: kCIInputImageKey)
         blendFilter.setValue(maskImage, forKey: kCIInputMaskImageKey)
 
@@ -122,17 +142,20 @@ final class Compositor {
 private extension CIImage {
     /// 缩放并居中裁剪到目标尺寸 (AspectFill)
     /// 使用 CILanczosScaleTransform 进行高质量缩放，直接裁剪中心区域
-    func scaledToFill(size targetSize: CGSize) -> CIImage {
+    /// - Parameters:
+    ///   - targetSize: 目标输出尺寸
+    ///   - scaleFilter: 可选的复用 CIFilter 实例，避免每帧通过字符串查找重建
+    func scaledToFill(size targetSize: CGSize, scaleFilter: CIFilter? = nil) -> CIImage {
         guard extent.width > 0, extent.height > 0 else { return self }
         let scale = max(targetSize.width / extent.width, targetSize.height / extent.height)
 
-        // 使用 CILanczosScaleTransform 可靠缩放，避免手动仿射变换坐标系陷阱
-        let scaleFilter = CIFilter(name: "CILanczosScaleTransform")!
-        scaleFilter.setValue(self, forKey: kCIInputImageKey)
-        scaleFilter.setValue(scale, forKey: kCIInputScaleKey)
-        scaleFilter.setValue(1.0, forKey: kCIInputAspectRatioKey)
+        // 优先使用传入的复用实例，否则创建新实例
+        let filter = scaleFilter ?? CIFilter(name: "CILanczosScaleTransform")!
+        filter.setValue(self, forKey: kCIInputImageKey)
+        filter.setValue(scale, forKey: kCIInputScaleKey)
+        filter.setValue(1.0, forKey: kCIInputAspectRatioKey)
 
-        guard let scaled = scaleFilter.outputImage else { return self }
+        guard let scaled = filter.outputImage else { return self }
 
         // 从缩放后图像的正中心裁剪出目标尺寸
         let cropX = (scaled.extent.width - targetSize.width) / 2 + scaled.extent.origin.x

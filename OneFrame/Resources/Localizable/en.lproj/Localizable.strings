@@ -8,6 +8,8 @@
 "camera.filter" = "Filter";
 "camera.frame" = "Frame";
 "camera.no_multicam" = "This device doesn't support dual camera";
+"camera.unavailable" = "Camera temporarily unavailable\nPlease close other apps using the camera and try again";
+"camera.error" = "Camera Error";
 
 "setting.title" = "Settings";
 "setting.language" = "Language";

@@ -21,6 +21,9 @@ final class CameraViewModel {
     /// 最新处理后的合成帧
     private(set) var latestProcessedImage: CIImage?
 
+    /// 最新已渲染的合成帧（UIImage，已脱离 CVPixelBuffer 依赖，线程安全读取）
+    private(set) var latestRenderedImage: UIImage?
+
     /// 最新前后帧
     private(set) var latestBackImage: CIImage?
     private(set) var latestFrontImage: CIImage?
@@ -58,6 +61,10 @@ final class CameraViewModel {
         return CIContext(options: [.workingColorSpace: NSNull()])
     }()
 
+    /// 渲染互斥锁：防止上一帧渲染未完成时新帧又提交到 GPU，导致管线堆积掉帧
+    private let renderLock = NSLock()
+    private var isRendering = false
+
     // MARK: - Frame Processing
 
     /// 处理前后摄像头帧
@@ -67,6 +74,21 @@ final class CameraViewModel {
         frontPixelBuffer: CVPixelBuffer,
         pipConfig: Compositor.PIPConfig? = nil
     ) {
+        // 渲染互斥：如果上一帧还在处理中，跳过本帧（防止 GPU 过载管线堆积）
+        renderLock.lock()
+        if isRendering {
+            renderLock.unlock()
+            return
+        }
+        isRendering = true
+        renderLock.unlock()
+
+        defer {
+            renderLock.lock()
+            isRendering = false
+            renderLock.unlock()
+        }
+
         let backImage = CIImage(cvPixelBuffer: backPixelBuffer)
         let frontImage = CIImage(cvPixelBuffer: frontPixelBuffer)
 
@@ -98,6 +120,9 @@ final class CameraViewModel {
         // 使用共享 CIContext 生成 UI 用的 UIImage（避免每帧创建 CIContext）
         if let cgImage = ciContext.createCGImage(processed, from: processed.extent) {
             let uiImage = UIImage(cgImage: cgImage, scale: UIScreen.main.scale, orientation: .up)
+            // 缓存已渲染的 UIImage，脱离 CVPixelBuffer 依赖
+            // 这样快速拍照时不会因 CVPixelBuffer 被回收而渲染出黑屏
+            latestRenderedImage = uiImage
             DispatchQueue.main.async { [weak self] in
                 self?.onProcessedFrameUpdate?(uiImage)
             }
@@ -112,10 +137,14 @@ final class CameraViewModel {
     // MARK: - Photo Capture
 
     func capturePhoto() -> UIImage? {
-        // latestProcessedImage 已经是完整管线处理过的画面（合成+滤镜+画框+水印+打码）
-        // 直接渲染即可，不要再次走 processImage 导致效果重复叠加
-        guard let processed = latestProcessedImage else { return nil }
+        // 优先使用已渲染的 UIImage（脱离 CVPixelBuffer 依赖，避免快速连拍黑屏）
+        // latestRenderedImage 在每帧同步渲染时缓存，不依赖原始 CVPixelBuffer 的生命周期
+        if let rendered = latestRenderedImage {
+            return rendered
+        }
 
+        // 降级兜底：如果没有缓存帧（极少见场景），尝试从 CIImage 链渲染
+        guard let processed = latestProcessedImage else { return nil }
         guard let cgImage = ciContext.createCGImage(processed, from: processed.extent) else {
             return nil
         }
@@ -173,8 +202,12 @@ final class CameraViewModel {
         pipeline.frameEffect.setFrame(frame)
     }
 
-    func setWatermarkRemoved(_ removed: Bool) {
-        pipeline.setWatermarkRemoved(removed)
+    func setAppNameWatermarkRemoved(_ removed: Bool) {
+        pipeline.setAppNameWatermarkRemoved(removed)
+    }
+
+    func setInfoWatermarkHidden(_ hidden: Bool) {
+        pipeline.setInfoWatermarkHidden(hidden)
     }
 
     func addMosaicRegion(normalizedRect: CGRect) -> MosaicRegion {

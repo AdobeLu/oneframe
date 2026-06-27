@@ -28,9 +28,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneDidDisconnect(_ scene: UIScene) {}
 
     func sceneDidBecomeActive(_ scene: UIScene) {
-        // 仅在用户已在相机页时恢复 session，避免与 CameraViewController.viewDidAppear 重复启动
-        if appCoordinator?.tabBarController.selectedIndex == 0 {
-            appCoordinator?.captureSessionManager.startSession()
+        // 仅在用户已在相机页且 session 之前是正常运行时恢复
+        // 如果是在中断期间（如微信视频占用摄像头），不要盲目重启
+        let manager = appCoordinator?.captureSessionManager
+        if appCoordinator?.tabBarController.selectedIndex == 0,
+           manager?.isSessionRunning == false {
+            manager?.startSession()
         }
     }
 

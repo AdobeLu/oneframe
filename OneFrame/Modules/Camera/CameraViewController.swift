@@ -32,6 +32,8 @@ final class CameraViewController: UIViewController {
     private let pipToggleButton = UIButton(type: .system)
     private let cameraSwitchButton = UIButton(type: .system)
     private let flashButton = UIButton(type: .system)
+    private let macroToggleButton = UIButton(type: .system)
+    private let watermarkToggleButton = UIButton(type: .system)
     private let modeSegment = UISegmentedControl(items: [
         OWLocalized("camera.photo"),
         OWLocalized("camera.video")
@@ -44,7 +46,10 @@ final class CameraViewController: UIViewController {
     // 帧缓存
     private var latestBackBuffer: CVPixelBuffer?
     private var latestFrontBuffer: CVPixelBuffer?
-
+    /// 当前是否处于摄像头中断状态
+    var isSessionInterrupted = false
+    /// 摄像头被占用时显示的遮罩
+    var cameraUnavailableOverlay: UIView?
     // 捏合缩放
     private var initialZoomFactor: CGFloat = 1.0
 
@@ -87,18 +92,30 @@ final class CameraViewController: UIViewController {
             // 水印会自动根据位置更新
         }
 
-        // 检查内购状态
-        viewModel.setWatermarkRemoved(IAPManager.shared.isWatermarkRemoved)
+        // 内购状态：同步 App 名称水印（"同框相机"）- 付费后移除
+        viewModel.setAppNameWatermarkRemoved(IAPManager.shared.isWatermarkRemoved)
+
+        // 信息水印（时间/地点/设备）初始可见，由用户开关按钮控制
+        isInfoWatermarkVisible = true
+        viewModel.setInfoWatermarkHidden(!isInfoWatermarkVisible)
+        updateWatermarkButtonAppearance()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         captureSessionManager.startSession()
+
+        // 重新同步内购状态（用户可能从设置页购买后返回）
+        viewModel.setAppNameWatermarkRemoved(IAPManager.shared.isWatermarkRemoved)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        captureSessionManager.stopSession()
+        // 不在此处停止 session：tab 切换时也会触发 viewDidDisappear，
+        // 每次 stop/start 循环中 MultiCamSession.startRunning() 需要 1-2 秒
+        // 协调多路摄像头硬件资源，导致从设置页切回拍照时有明显黑屏延迟。
+        // 统一由 SceneDelegate.sceneDidEnterBackground 在真后台时停止，
+        // sceneDidBecomeActive / viewDidAppear 在回到前台时恢复。
     }
 
     override func viewDidLayoutSubviews() {
@@ -129,6 +146,11 @@ final class CameraViewController: UIViewController {
     private func setupCaptureManager() {
         captureSessionManager.delegate = self
         captureSessionManager.setupSession()
+
+        // 监听微距状态变化
+        captureSessionManager.onMacroStateChange = { [weak self] state in
+            self?.updateMacroButtonAppearance(for: state)
+        }
     }
 
     private func setupViewModel() {
@@ -291,6 +313,37 @@ final class CameraViewController: UIViewController {
             flashButton.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 12)
         ])
 
+        // MARK: 微距按钮 - 取景框左上角，闪光灯右侧
+        macroToggleButton.isHidden = true // 不支持微距时隐藏
+        macroToggleButton.addTarget(self, action: #selector(macroToggleTapped), for: .touchUpInside)
+        previewContainer.addSubview(macroToggleButton)
+        macroToggleButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            macroToggleButton.widthAnchor.constraint(equalToConstant: 36),
+            macroToggleButton.heightAnchor.constraint(equalToConstant: 36),
+            macroToggleButton.leadingAnchor.constraint(equalTo: flashButton.trailingAnchor, constant: 8),
+            macroToggleButton.centerYAnchor.constraint(equalTo: flashButton.centerYAnchor)
+        ])
+
+        // MARK: 水印开关按钮 - 取景框左上角，微距按钮右侧
+        watermarkToggleButton.setImage(UIImage(systemName: "info.circle", withConfiguration: smallIconConfig), for: .normal)
+        watermarkToggleButton.tintColor = UIColor.white.withAlphaComponent(0.8)
+        watermarkToggleButton.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+        watermarkToggleButton.layer.cornerRadius = 18
+        watermarkToggleButton.layer.shadowColor = UIColor.black.cgColor
+        watermarkToggleButton.layer.shadowOpacity = 0.3
+        watermarkToggleButton.layer.shadowOffset = CGSize(width: 0, height: 1)
+        watermarkToggleButton.layer.shadowRadius = 4
+        watermarkToggleButton.addTarget(self, action: #selector(watermarkToggleTapped), for: .touchUpInside)
+        previewContainer.addSubview(watermarkToggleButton)
+        watermarkToggleButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            watermarkToggleButton.widthAnchor.constraint(equalToConstant: 36),
+            watermarkToggleButton.heightAnchor.constraint(equalToConstant: 36),
+            watermarkToggleButton.leadingAnchor.constraint(equalTo: macroToggleButton.trailingAnchor, constant: 8),
+            watermarkToggleButton.centerYAnchor.constraint(equalTo: flashButton.centerYAnchor)
+        ])
+
         // MARK: PIP 开关按钮 - 底部栏左侧
         pipToggleButton.setImage(UIImage(systemName: "pip.enter", withConfiguration: smallIconConfig), for: .normal)
         pipToggleButton.tintColor = .systemYellow
@@ -354,6 +407,7 @@ final class CameraViewController: UIViewController {
         // MARK: 层级管理
         previewContainer.bringSubviewToFront(pipOverlayView)
         previewContainer.bringSubviewToFront(flashButton)
+        previewContainer.bringSubviewToFront(watermarkToggleButton)
         view.bringSubviewToFront(topBar)
         view.bringSubviewToFront(bottomBar)
 
@@ -654,12 +708,91 @@ final class CameraViewController: UIViewController {
         updateFlashButtonAppearance(for: nextMode)
     }
 
+    @objc private func watermarkToggleTapped() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+
+        // 仅切换时间/地点/设备信息水印，不影响"同框相机"品牌水印
+        isInfoWatermarkVisible.toggle()
+        viewModel.setInfoWatermarkHidden(!isInfoWatermarkVisible)
+        updateWatermarkButtonAppearance()
+    }
+
+    /// 时间/地点/设备信息水印是否可见（用户手动开关，免费功能）
+    private var isInfoWatermarkVisible = true
+
+    private func updateWatermarkButtonAppearance() {
+        let iconName = isInfoWatermarkVisible ? "info.circle" : "info.circle.fill"
+        watermarkToggleButton.setImage(
+            UIImage(systemName: iconName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)),
+            for: .normal
+        )
+        watermarkToggleButton.tintColor = isInfoWatermarkVisible
+            ? UIColor.white.withAlphaComponent(0.8)
+            : UIColor.white.withAlphaComponent(0.35)
+    }
+
     private func updateFlashButtonAppearance(for mode: TorchMode) {
         flashButton.setImage(
             UIImage(systemName: mode.sfSymbolName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)),
             for: .normal
         )
         flashButton.tintColor = torchTintColor(for: mode)
+    }
+
+    // MARK: - Macro (微距)
+
+    @objc private func macroToggleTapped() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+
+        captureSessionManager.toggleMacro()
+    }
+
+    private func updateMacroButtonAppearance(for state: MacroState) {
+        let smallIconConfig = UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+
+        switch state {
+        case .unavailable:
+            // 不支持微距：隐藏按钮并收缩宽度，让水印按钮紧贴闪光灯
+            macroToggleButton.isHidden = true
+            if let widthConstraint = macroToggleButton.constraints.first(where: { $0.firstAttribute == .width }) {
+                widthConstraint.constant = 0
+            }
+
+        case .inactive:
+            // 支持微距但未激活：半透明白色图标
+            macroToggleButton.isHidden = false
+            if let widthConstraint = macroToggleButton.constraints.first(where: { $0.firstAttribute == .width }) {
+                widthConstraint.constant = 36
+            }
+            macroToggleButton.setImage(UIImage(systemName: "camera.macro", withConfiguration: smallIconConfig), for: .normal)
+            macroToggleButton.tintColor = UIColor.white.withAlphaComponent(0.5)
+            macroToggleButton.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+            macroToggleButton.layer.cornerRadius = 18
+            macroToggleButton.layer.shadowColor = UIColor.black.cgColor
+            macroToggleButton.layer.shadowOpacity = 0.3
+            macroToggleButton.layer.shadowOffset = CGSize(width: 0, height: 1)
+            macroToggleButton.layer.shadowRadius = 4
+
+        case .active:
+            // 微距已激活：黄色高亮图标
+            macroToggleButton.isHidden = false
+            if let widthConstraint = macroToggleButton.constraints.first(where: { $0.firstAttribute == .width }) {
+                widthConstraint.constant = 36
+            }
+            macroToggleButton.setImage(UIImage(systemName: "camera.macro", withConfiguration: smallIconConfig), for: .normal)
+            macroToggleButton.tintColor = .systemYellow
+            macroToggleButton.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.15)
+            macroToggleButton.layer.cornerRadius = 18
+            macroToggleButton.layer.shadowColor = UIColor.systemYellow.cgColor
+            macroToggleButton.layer.shadowOpacity = 0.5
+            macroToggleButton.layer.shadowOffset = CGSize(width: 0, height: 1)
+            macroToggleButton.layer.shadowRadius = 4
+        }
+
+        // 布局刷新
+        previewContainer.layoutIfNeeded()
     }
 }
 
@@ -671,25 +804,27 @@ extension CameraViewController: CaptureSessionManagerDelegate {
     func captureSessionManager(_ manager: CaptureSessionManager, didOutputBackPixelBuffer pixelBuffer: CVPixelBuffer) {
         latestBackBuffer = pixelBuffer
 
+        // 仅后置可用时（前置被占用），直接用后置帧处理
         if let frontBuffer = latestFrontBuffer {
             viewModel.processFrames(
                 backPixelBuffer: pixelBuffer,
                 frontPixelBuffer: frontBuffer,
                 pipConfig: cachedPIPConfig
             )
-        }
-    }
-
-    func captureSessionManager(_ manager: CaptureSessionManager, didOutputFrontPixelBuffer pixelBuffer: CVPixelBuffer) {
-        latestFrontBuffer = pixelBuffer
-
-        if let backBuffer = latestBackBuffer {
+        } else if !isSessionInterrupted {
+            // 没有前置帧且未中断：降级为仅后置模式
             viewModel.processFrames(
-                backPixelBuffer: backBuffer,
+                backPixelBuffer: pixelBuffer,
                 frontPixelBuffer: pixelBuffer,
                 pipConfig: cachedPIPConfig
             )
         }
+    }
+
+    func captureSessionManager(_ manager: CaptureSessionManager, didOutputFrontPixelBuffer pixelBuffer: CVPixelBuffer) {
+        // 仅缓存前置帧，不触发渲染。统一由后置帧回调驱动渲染管线，避免前后双队列
+        // 并发执行两次完整渲染管线（每帧各触发一次，实际渲染量翻倍）导致 GPU 过载掉帧。
+        latestFrontBuffer = pixelBuffer
     }
 
     func captureSessionManager(_ manager: CaptureSessionManager, didDetermineBackOutputSize size: CGSize) {
@@ -697,6 +832,73 @@ extension CameraViewController: CaptureSessionManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.view.setNeedsLayout()
         }
+    }
+
+    // MARK: - Session Interruption Handlers
+
+    func captureSessionManager(_ manager: CaptureSessionManager, wasInterrupted reason: AVCaptureSession.InterruptionReason) {
+        isSessionInterrupted = true
+        print("📷 Camera session interrupted (reason: \(reason.rawValue))")
+        showCameraUnavailableOverlay()
+    }
+
+    func captureSessionManagerInterruptionEnded(_ manager: CaptureSessionManager) {
+        isSessionInterrupted = false
+        print("📷 Camera session interruption ended")
+        hideCameraUnavailableOverlay()
+    }
+
+    func captureSessionManager(_ manager: CaptureSessionManager, didReceiveRuntimeError error: Error) {
+        print("📷 Camera runtime error: \(error.localizedDescription)")
+        showCameraErrorAlert(message: error.localizedDescription)
+    }
+
+    // MARK: - UI: Camera Unavailable State
+
+    private func showCameraUnavailableOverlay() {
+        guard cameraUnavailableOverlay == nil else { return }
+        let overlay = UIView()
+        overlay.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = UILabel()
+        label.text = OWLocalized("camera.unavailable")
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 15, weight: .medium)
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+        overlay.addSubview(label)
+
+        previewContainer.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: previewContainer.topAnchor),
+            overlay.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor),
+            label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 40),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -40),
+        ])
+
+        cameraUnavailableOverlay = overlay
+        previewContainer.bringSubviewToFront(overlay)
+    }
+
+    private func hideCameraUnavailableOverlay() {
+        cameraUnavailableOverlay?.removeFromSuperview()
+        cameraUnavailableOverlay = nil
+    }
+
+    private func showCameraErrorAlert(message: String) {
+        let alert = UIAlertController(
+            title: OWLocalized("camera.error"),
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: OWLocalized("common.ok"), style: .default))
+        present(alert, animated: true)
     }
 
     // MARK: - PIP Config (主线程安全更新，后台线程读取缓存)

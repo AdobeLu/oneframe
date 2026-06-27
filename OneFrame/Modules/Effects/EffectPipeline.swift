@@ -59,8 +59,13 @@ final class EffectPipeline {
         return mosaiced
     }
 
-    /// 获取当前水印显示状态
-    func setWatermarkRemoved(_ removed: Bool) {
-        watermarkEffect.setWatermarkRemoved(removed)
+    /// 内购：移除 App 名称水印（"同框相机"）
+    func setAppNameWatermarkRemoved(_ removed: Bool) {
+        watermarkEffect.setAppNameWatermarkRemoved(removed)
+    }
+
+    /// 用户手动开关时间/地点/设备信息水印
+    func setInfoWatermarkHidden(_ hidden: Bool) {
+        watermarkEffect.setInfoWatermarkHidden(hidden)
     }
 }

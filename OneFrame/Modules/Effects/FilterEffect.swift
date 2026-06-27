@@ -37,15 +37,31 @@ final class FilterEffect {
 
     private(set) var currentFilter: FilterType = .original
 
+    /// 缓存的 CIFilter 实例，避免每帧通过字符串查找重建
+    private var cachedFilter: CIFilter?
+    private var cachedFilterType: FilterType = .original
+
     func setFilter(_ filter: FilterType) {
         currentFilter = filter
+        // 滤镜类型变化时重建缓存
+        cachedFilter = nil
+        cachedFilterType = filter
     }
 
     /// 对输入图像应用当前滤镜
     func apply(to image: CIImage) -> CIImage {
-        guard let filterName = currentFilter.ciFilterName,
-              let filter = CIFilter(name: filterName) else {
+        guard let filterName = currentFilter.ciFilterName else {
             return image
+        }
+
+        // 复用或创建 CIFilter 实例
+        let filter: CIFilter
+        if let cached = cachedFilter, cachedFilterType == currentFilter {
+            filter = cached
+        } else {
+            guard let newFilter = CIFilter(name: filterName) else { return image }
+            cachedFilter = newFilter
+            filter = newFilter
         }
 
         filter.setValue(image, forKey: kCIInputImageKey)

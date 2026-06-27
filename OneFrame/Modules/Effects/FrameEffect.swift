@@ -31,21 +31,28 @@ final class FrameEffect {
 
     private(set) var currentFrame: FrameStyle = .none
 
-    // 缓存的画框 CIImage
+    // 缓存的画框 CIImage（按 canvasSize 缓存，尺寸不变时复用）
     private var cachedFrameImage: CIImage?
     private var cachedFrameName: String?
+    private var cachedFrameSize: CGSize = .zero
+
+    /// 复用 CIFilter 实例，避免每帧通过字符串查找重建
+    private lazy var sourceOverFilter: CIFilter? = {
+        CIFilter(name: "CISourceOverCompositing")
+    }()
 
     func setFrame(_ frame: FrameStyle) {
         currentFrame = frame
         cachedFrameImage = nil
         cachedFrameName = nil
+        cachedFrameSize = .zero
     }
 
     /// 将画框叠加到图像上
     func apply(to image: CIImage, canvasSize: CGSize) -> CIImage {
         guard currentFrame != .none else { return image }
 
-        let frameImage = loadFrameImage(size: canvasSize)
+        let frameImage = cachedFrameImage(for: canvasSize)
         guard let frame = frameImage else { return image }
 
         // 将图像放置到画布上（居中）
@@ -64,8 +71,8 @@ final class FrameEffect {
             y: imageY - image.extent.origin.y
         ).scaledBy(x: imageScale, y: imageScale))
 
-        // 合成: 画框在上，图像在下
-        guard let compositor = CIFilter(name: "CISourceOverCompositing") else {
+        // 合成: 画框在上，图像在下（复用 CIFilter 实例）
+        guard let compositor = sourceOverFilter else {
             return image
         }
         compositor.setValue(transformedImage, forKey: kCIInputImageKey)
@@ -75,6 +82,21 @@ final class FrameEffect {
     }
 
     // MARK: - Private
+
+    /// 获取缓存的画框图像，仅在画框样式或画布尺寸变化时重新加载
+    private func cachedFrameImage(for size: CGSize) -> CIImage? {
+        let cacheKey = currentFrame.assetName ?? "default"
+        if let cached = cachedFrameImage,
+           cachedFrameName == cacheKey,
+           cachedFrameSize == size {
+            return cached
+        }
+        let loaded = loadFrameImage(size: size)
+        cachedFrameImage = loaded
+        cachedFrameName = cacheKey
+        cachedFrameSize = size
+        return loaded
+    }
 
     private func loadFrameImage(size: CGSize) -> CIImage? {
         guard let assetName = currentFrame.assetName else { return nil }
