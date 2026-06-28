@@ -204,17 +204,12 @@ final class CameraViewModel {
     // MARK: - Effects Control
 
     var filterEffect: FilterEffect { pipeline.filterEffect }
-    var frameEffect: FrameEffect { pipeline.frameEffect }
     var watermarkEffect: WatermarkEffect { pipeline.watermarkEffect }
     var mosaicEffect: MosaicEffect { pipeline.mosaicEffect }
     var compositor: Compositor { pipeline.compositor }
 
     func setFilter(_ filter: FilterType) {
         pipeline.filterEffect.setFilter(filter)
-    }
-
-    func setFrame(_ frame: FrameStyle) {
-        pipeline.frameEffect.setFrame(frame)
     }
 
     func setAppNameWatermarkRemoved(_ removed: Bool) {

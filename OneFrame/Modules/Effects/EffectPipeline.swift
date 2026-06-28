@@ -12,7 +12,6 @@ final class EffectPipeline {
     // MARK: - Components
 
     let filterEffect = FilterEffect()
-    let frameEffect = FrameEffect()
     let watermarkEffect = WatermarkEffect()
     let mosaicEffect = MosaicEffect()
     let compositor = Compositor()
@@ -38,11 +37,8 @@ final class EffectPipeline {
             config: pipConfig
         )
 
-        // 3. 叠加画框
-        let framed = frameEffect.apply(to: composited, canvasSize: compositor.canvasSize)
-
-        // 4. 叠加水印
-        let watermarked = watermarkEffect.apply(to: framed, canvasSize: compositor.canvasSize)
+        // 3. 叠加水印
+        let watermarked = watermarkEffect.apply(to: composited, canvasSize: compositor.canvasSize)
 
         // 5. 应用打码
         let mosaiced = mosaicEffect.apply(to: watermarked, canvasSize: compositor.canvasSize)
@@ -53,8 +49,7 @@ final class EffectPipeline {
     /// 仅处理已有的合成画面（用于预览更新）
     func processImage(_ image: CIImage, canvasSize: CGSize) -> CIImage {
         let filtered = filterEffect.apply(to: image)
-        let framed = frameEffect.apply(to: filtered, canvasSize: canvasSize)
-        let watermarked = watermarkEffect.apply(to: framed, canvasSize: canvasSize)
+        let watermarked = watermarkEffect.apply(to: filtered, canvasSize: canvasSize)
         let mosaiced = mosaicEffect.apply(to: watermarked, canvasSize: canvasSize)
         return mosaiced
     }

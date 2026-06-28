@@ -64,4 +64,14 @@ final class AppCoordinator {
         tabBarController.viewControllers = [cameraVC, galleryVC, settingsVC]
         tabBarController.selectedIndex = 0
     }
+
+    /// 进入后台/通知栏下拉时，如正在录像则自动停止
+    func stopRecordingIfNeeded() {
+        cameraVC.stopRecordingIfNeeded()
+    }
+
+    /// 场景恢复活跃时，清除中断遮罩
+    func handleSceneDidBecomeActive() {
+        cameraVC.handleSceneDidBecomeActive()
+    }
 }

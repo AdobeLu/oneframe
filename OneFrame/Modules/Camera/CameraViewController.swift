@@ -33,7 +33,6 @@ final class CameraViewController: UIViewController {
     private let shutterRingView = UIView()
     private let shutterButton = UIButton(type: .system)
     private let filterButton = UIButton(type: .system)
-    private let frameButton = UIButton(type: .system)
     private let pipToggleButton = UIButton(type: .system)
     private let cameraSwitchButton = UIButton(type: .system)
     private let flashButton = UIButton(type: .system)
@@ -64,7 +63,7 @@ final class CameraViewController: UIViewController {
     /// 当前是否处于摄像头中断状态
     var isSessionInterrupted = false
     /// 摄像头被占用时显示的遮罩
-    var cameraUnavailableOverlay: UIView?
+    private var cameraUnavailableOverlay: UIView?
     // 捏合缩放
     private var initialZoomFactor: CGFloat = 1.0
 
@@ -414,7 +413,6 @@ final class CameraViewController: UIViewController {
 
         let styledButtons: [(button: UIButton, icon: String, action: Selector)] = [
             (filterButton, "camera.filters", #selector(filterTapped)),
-            (frameButton, "rectangle.on.rectangle", #selector(frameTapped)),
             (cameraSwitchButton, "arrow.triangle.2.circlepath.camera", #selector(cameraSwitchTapped))
         ]
 
@@ -438,12 +436,6 @@ final class CameraViewController: UIViewController {
         NSLayoutConstraint.activate([
             filterButton.trailingAnchor.constraint(equalTo: shutterButton.leadingAnchor, constant: -50),
             filterButton.centerYAnchor.constraint(equalTo: shutterButton.centerYAnchor)
-        ])
-
-        // 画框按钮 - 快门右侧
-        NSLayoutConstraint.activate([
-            frameButton.leadingAnchor.constraint(equalTo: shutterButton.trailingAnchor, constant: 50),
-            frameButton.centerYAnchor.constraint(equalTo: shutterButton.centerYAnchor)
         ])
 
         // 前后摄像头切换按钮 - 底部栏右侧
@@ -689,6 +681,24 @@ final class CameraViewController: UIViewController {
         }
     }
 
+    /// 场景恢复活跃时调用，强制清除中断遮罩（通知栏下拉后收起）
+    func handleSceneDidBecomeActive() {
+        if isSessionInterrupted {
+            isSessionInterrupted = false
+        }
+        hideCameraUnavailableOverlay()
+    }
+
+    /// 进入后台或通知栏下拉时，如果正在录像则自动停止
+    func stopRecordingIfNeeded() {
+        guard viewModel.isRecording else { return }
+        viewModel.stopRecording { url in
+            if let url = url {
+                print("Video saved at: \(url) (stopped due to app interruption)")
+            }
+        }
+    }
+
     private func toggleVideoRecording() {
         if viewModel.isRecording {
             viewModel.stopRecording { url in
@@ -709,23 +719,6 @@ final class CameraViewController: UIViewController {
                 self?.viewModel.setFilter(filter)
             }
             if filter == viewModel.filterEffect.currentFilter {
-                action.setValue(true, forKey: "checked")
-            }
-            alert.addAction(action)
-        }
-
-        alert.addAction(UIAlertAction(title: OWLocalized("common.cancel"), style: .cancel))
-        present(alert, animated: true)
-    }
-
-    @objc private func frameTapped() {
-        let alert = UIAlertController(title: OWLocalized("camera.frame"), message: nil, preferredStyle: .actionSheet)
-
-        for frame in FrameStyle.allCases {
-            let action = UIAlertAction(title: frame.rawValue, style: .default) { [weak self] _ in
-                self?.viewModel.setFrame(frame)
-            }
-            if frame == viewModel.frameEffect.currentFrame {
                 action.setValue(true, forKey: "checked")
             }
             alert.addAction(action)
