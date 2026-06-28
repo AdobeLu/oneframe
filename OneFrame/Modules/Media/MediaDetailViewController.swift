@@ -92,7 +92,7 @@ final class MediaDetailViewController: UIViewController {
             pageViewController.view.topAnchor.constraint(equalTo: view.topAnchor),
             pageViewController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             pageViewController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            pageViewController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            pageViewController.view.bottomAnchor.constraint(equalTo: bottomToolbar.topAnchor),
 
             bottomToolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomToolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -101,6 +101,10 @@ final class MediaDetailViewController: UIViewController {
         ])
 
         setupToolbarButtons()
+
+        // 向下拖拽关闭手势
+        let panToDismiss = UIPanGestureRecognizer(target: self, action: #selector(handleDismissPan(_:)))
+        view.addGestureRecognizer(panToDismiss)
     }
 
     /// 将翻页手势引用注入每个页面，让页面内的 ScrollView 动态判断手势优先级
@@ -250,6 +254,63 @@ final class MediaDetailViewController: UIViewController {
         present(alert, animated: true)
     }
 
+    // MARK: - Interactive Dismiss (内联简单弹簧动画，绑定 animator 转场)
+
+    @objc private func handleDismissPan(_ gesture: UIPanGestureRecognizer) {
+        let translation = gesture.translation(in: view)
+        let velocity = gesture.velocity(in: view)
+
+        switch gesture.state {
+        case .changed:
+            // 仅向下拖拽有效，且页面未放大时响应
+            guard let page = currentPageController, page.isZoomedOut, translation.y > 0 else { break }
+
+            let progress = min(translation.y / (view.bounds.height * 0.5), 1.0)
+            let scale = 1.0 - progress * 0.22
+
+            // 整体缩放 + 位移
+            pageViewController.view.transform = CGAffineTransform(
+                translationX: 0,
+                y: translation.y * 0.75
+            ).scaledBy(x: scale, y: scale)
+
+            // 背景 + 工具栏渐隐
+            pageViewController.view.alpha = 1.0 - progress * 0.6
+            bottomToolbar.alpha = 1.0 - progress * 1.5
+            view.backgroundColor = UIColor.black.withAlphaComponent(1.0 - progress * 0.8)
+
+        case .ended, .cancelled:
+            let shouldDismiss = translation.y > view.bounds.height * 0.2 || velocity.y > 800
+
+            if shouldDismiss {
+                navigationController?.popViewController(animated: true)
+            } else {
+                // 弹簧回原位
+                UIView.animate(
+                    withDuration: 0.35,
+                    delay: 0,
+                    usingSpringWithDamping: 0.75,
+                    initialSpringVelocity: 0,
+                    options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState],
+                    animations: {
+                        self.pageViewController.view.transform = .identity
+                        self.pageViewController.view.alpha = 1.0
+                        self.bottomToolbar.alpha = 1.0
+                        self.view.backgroundColor = .black
+                    }
+                )
+            }
+
+        default:
+            break
+        }
+    }
+
+    /// 获取当前可见页面控制器
+    private var currentPageController: MediaPageViewController? {
+        pageViewController.viewControllers?.first as? MediaPageViewController
+    }
+
     private func showExportResult(_ success: Bool) {
         let message = success ? "Saved to album" : "Save failed"
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
@@ -292,5 +353,15 @@ extension MediaDetailViewController: UIPageViewControllerDelegate {
             }
             break
         }
+    }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+
+extension MediaDetailViewController {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 仅 pan 手势需要与翻页手势共存
+        return gestureRecognizer is UIPanGestureRecognizer
     }
 }

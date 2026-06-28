@@ -14,7 +14,7 @@ final class MediaPageViewController: UIViewController {
 
     private let entry: MediaEntry
     private let scrollView = UIScrollView()
-    private let imageView = UIImageView()
+    let imageView = UIImageView()
 
     /// PageViewController 内部 ScrollView 的 pan 手势，用于动态判断手势优先级
     weak var externalPanGesture: UIPanGestureRecognizer?
@@ -165,6 +165,11 @@ final class MediaPageViewController: UIViewController {
 
     func resetZoom() {
         scrollView.setZoomScale(scrollView.minimumZoomScale, animated: false)
+    }
+
+    /// 当前图片是否处于未放大状态（用于判断是否允许向下拖拽关闭）
+    var isZoomedOut: Bool {
+        scrollView.zoomScale <= scrollView.minimumZoomScale
     }
 
     @objc private func playVideo() {

@@ -30,36 +30,40 @@ final class MediaPreviewViewController: UIViewController {
     }
     private var selectedIndices = Set<Int>()
 
-    // MARK: - Layout (Transform 缩放 + 捏合中跨阈值瞬时切换，模拟系统相册)
 
-    private let layout = UICollectionViewFlowLayout()
+    // MARK: - Layout (setCollectionViewLayout 原生 fade 过渡，模拟系统相册)
 
-    /// 当前整数列数（布局基于此构建，捏合跨阈值时实时更新）
+    private var layout: UICollectionViewFlowLayout
+
+    /// 当前整数列数（1/3/5）
     private var itemsPerRow: CGFloat = 3
-
-    /// 相对于当前布局的缩放系数。1.0 = 视觉与布局一致
-    /// 跨阈值切换后会重新校准此值以保持视觉连续
-    private var relativeScale: CGFloat = 1.0
 
     // MARK: - Pinch Gesture State
 
-    /// 用于逐帧计算 delta 的上一帧 gesture.scale 快照
-    private var lastGestureScale: CGFloat = 1.0
-    private var lastPinchVelocity: CGFloat = 0
-    private var lastPinchTime: CFTimeInterval = 0
+    /// 手势逐帧 delta 累计缩放值（追踪自上次 layout 切换以来的变化）
+    private var pinchAccumulatedScale: CGFloat = 1.0
+    /// 上一帧 gesture.scale 快照，用于计算 delta
+    private var lastPinchScale: CGFloat = 1.0
+    /// layout 切换动画进行中标记，避免重叠触发
+    private var isLayoutTransitioning = false
+
+    /// 触发 layout 切换的缩放阈值（累积变化超过 15% 即切换）
+    private let pinchLayoutThreshold: CGFloat = 0.15
 
     // MARK: - Init
 
     init() {
-        layout.minimumInteritemSpacing = 2
-        layout.minimumLineSpacing = 2
-        layout.sectionInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        let initialLayout = UICollectionViewFlowLayout()
+        initialLayout.minimumInteritemSpacing = 2
+        initialLayout.minimumLineSpacing = 2
+        initialLayout.sectionInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
 
-        let spacing = layout.minimumInteritemSpacing * (3 - 1) + layout.sectionInset.left + layout.sectionInset.right
+        let spacing = initialLayout.minimumInteritemSpacing * (3 - 1) + initialLayout.sectionInset.left + initialLayout.sectionInset.right
         let itemWidth = (UIScreen.main.bounds.width - spacing) / 3
-        layout.itemSize = CGSize(width: itemWidth, height: itemWidth)
+        initialLayout.itemSize = CGSize(width: itemWidth, height: itemWidth)
 
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        self.layout = initialLayout
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: initialLayout)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -202,70 +206,32 @@ final class MediaPreviewViewController: UIViewController {
 
     // MARK: - Layout Update
 
-    /// 按整数列数更新 cell 尺寸
-    private func updateItemSize(for columns: CGFloat) {
-        let spacing = layout.minimumInteritemSpacing * (columns - 1) + layout.sectionInset.left + layout.sectionInset.right
+    /// 创建指定列数的 FlowLayout
+    private func makeLayout(columns: CGFloat) -> UICollectionViewFlowLayout {
+        let newLayout = UICollectionViewFlowLayout()
+        newLayout.minimumInteritemSpacing = 2
+        newLayout.minimumLineSpacing = 2
+        newLayout.sectionInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        let spacing = newLayout.minimumInteritemSpacing * (columns - 1) + newLayout.sectionInset.left + newLayout.sectionInset.right
         let availableWidth = view.bounds.width - spacing
         let itemWidth = floor(availableWidth / columns)
-        layout.itemSize = CGSize(width: itemWidth, height: itemWidth)
-        layout.invalidateLayout()
+        newLayout.itemSize = CGSize(width: itemWidth, height: itemWidth)
+        return newLayout
     }
 
-    /// 捏合中跨奇数列阈值时，瞬时切换布局 + 补偿 transform。
-    /// 不引入额外动画 —— 手势已按 60fps 驱动 transform，跨阈值瞬间
-    /// relativeScale 精确补偿使视觉尺寸完全不变，下一帧手势继续更新即可。
-    private func performLayoutTransition(to newColumns: CGFloat) {
-        let oldColumns = itemsPerRow
-        let visualColumnsBefore = oldColumns / relativeScale
+    /// 手指不离开屏幕时即时切换 layout，利用 UICollectionView 原生 fade 过渡动效
+    /// 效果: 两边不变 cell 原地不动，中间变动 cell 渐变刷新
+    private func switchToLayout(columns: CGFloat) {
+        guard !isLayoutTransitioning, columns != itemsPerRow else { return }
+        isLayoutTransitioning = true
 
-        itemsPerRow = newColumns
-        relativeScale = newColumns / visualColumnsBefore
+        let newLayout = makeLayout(columns: columns)
+        itemsPerRow = columns
+        layout = newLayout
 
-        updateItemSize(for: newColumns)
-        // 强制 layout 立即算出新 contentSize，否则下面 clamp 拿到的是旧值
-        collectionView.layoutIfNeeded()
-
-        // 列数变化（尤其 1→3、1→5）时 contentSize 可能骤降，
-        // contentOffset 若不修正会超出有效范围 → 可视区全是黑屏
-        let bottomInset = collectionView.adjustedContentInset.bottom
-        let topInset = collectionView.adjustedContentInset.top
-        let maxOffsetY = collectionView.contentSize.height + bottomInset - collectionView.bounds.height
-        let minOffsetY = -topInset
-        var clampedOffset = collectionView.contentOffset
-        if clampedOffset.y > maxOffsetY {
-            clampedOffset.y = max(maxOffsetY, minOffsetY)
+        collectionView.setCollectionViewLayout(newLayout, animated: true) { [weak self] _ in
+            self?.isLayoutTransitioning = false
         }
-        collectionView.contentOffset = clampedOffset
-
-        collectionView.transform = CGAffineTransform(scaleX: relativeScale, y: relativeScale)
-    }
-
-    // MARK: - Pinch 边界阻尼
-
-    /// 对视觉等效列数进行橡皮筋阻尼
-    private func rubberBandColumns(_ columns: CGFloat) -> CGFloat {
-        if columns < 1 {
-            return 1 - (1 - exp(-(1 - columns) * 2.0)) * 0.5
-        } else if columns > 5 {
-            return 5 + (1 - exp(-(columns - 5) * 2.0)) * 0.5
-        }
-        return columns
-    }
-
-    /// 取视觉等效列数最近的奇数列（1/3/5），模拟系统相册。
-    /// 捏合中使用激进阈值避免黑边：1→3 在 >1 时触发，3→5 在 >3 时触发。
-    private func nearestOddColumn(from visualColumns: CGFloat) -> CGFloat {
-        if visualColumns <= 1 { return 1 }
-        if visualColumns > 3 { return 5 }
-        return 3
-    }
-
-    /// 松手吸附用中间点判断（1↔3 中点=2，3↔5 中点=4）。
-    /// 与捏合中的激进阈值分开，避免"已超过中间点，松手却被拉回原列数"。
-    private func nearestOddColumnForSnap(from visualColumns: CGFloat) -> CGFloat {
-        if visualColumns <= 2 { return 1 }
-        if visualColumns <= 4 { return 3 }
-        return 5
     }
 
     // MARK: - Selection UI
@@ -344,74 +310,51 @@ final class MediaPreviewViewController: UIViewController {
         updateSelectionToolbar()
     }
 
-    // MARK: - Pinch to Zoom (逐帧增量 + 跨阈值瞬时切换 + 松手弹簧归位)
+    // MARK: - Pinch to Zoom (模拟系统相册: setCollectionViewLayout 原生 fade 过渡)
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
         guard !isSelectionMode else { return }
 
         switch gesture.state {
         case .began:
-            lastGestureScale = 1.0
-            relativeScale = 1.0
-            lastPinchVelocity = 0
-            lastPinchTime = CACurrentMediaTime()
+            pinchAccumulatedScale = 1.0
+            lastPinchScale = 1.0
+            isLayoutTransitioning = false
 
         case .changed:
-            let now = CACurrentMediaTime()
-            let dt = max(now - lastPinchTime, 0.001)
-            lastPinchTime = now
+            // 逐帧 delta，不受 gesture.scale 绝对值限制（手指不离开可无限累积）
+            let delta = gesture.scale / lastPinchScale
+            lastPinchScale = gesture.scale
+            pinchAccumulatedScale *= delta
 
-            // 逐帧增量 delta，不受之前是否跨阈值的影响
-            let delta = gesture.scale / lastGestureScale
-            lastGestureScale = gesture.scale
-
-            var newRelativeScale = relativeScale * delta
-
-            let rawColumns = itemsPerRow / newRelativeScale
-            let dampedColumns = rubberBandColumns(rawColumns)
-
-            newRelativeScale = itemsPerRow / dampedColumns
-            relativeScale = newRelativeScale
-
-            // 记录视觉列数变化速度，用于松手预测
-            lastPinchVelocity = (dampedColumns - rawColumns) / dt
-
-            // 检测是否跨越奇数列阈值（1/3/5），瞬时切换布局 + 补偿 transform
-            let targetColumns = nearestOddColumn(from: dampedColumns)
-            if targetColumns != itemsPerRow {
-                // 瞬时切换：3列缩小→5列放大，视觉完全连续无跳变
-                performLayoutTransition(to: targetColumns)
-            } else {
-                // 未跨阈值，仅更新 transform
-                collectionView.transform = CGAffineTransform(scaleX: relativeScale,
-                                                              y: relativeScale)
+            if pinchAccumulatedScale > 1.0 + pinchLayoutThreshold {
+                // 扩张 → 放大 → 减少列数
+                let newColumns: CGFloat
+                switch itemsPerRow {
+                case 5: newColumns = 3
+                case 3: newColumns = 1
+                default: newColumns = 1
+                }
+                if newColumns != itemsPerRow {
+                    switchToLayout(columns: newColumns)
+                    pinchAccumulatedScale = 1.0
+                }
+            } else if pinchAccumulatedScale < 1.0 - pinchLayoutThreshold {
+                // 收拢 → 缩小 → 增加列数
+                let newColumns: CGFloat
+                switch itemsPerRow {
+                case 1: newColumns = 3
+                case 3: newColumns = 5
+                default: newColumns = 5
+                }
+                if newColumns != itemsPerRow {
+                    switchToLayout(columns: newColumns)
+                    pinchAccumulatedScale = 1.0
+                }
             }
 
         case .ended, .cancelled:
-            let visualColumns = itemsPerRow / relativeScale
-            let projected = visualColumns + lastPinchVelocity * 0.06
-            let targetColumns = nearestOddColumnForSnap(from: projected)
-            let needsLayoutSwitch = targetColumns != itemsPerRow
-
-            if needsLayoutSwitch {
-                itemsPerRow = targetColumns
-                updateItemSize(for: targetColumns)
-            }
-
-            UIView.animate(
-                withDuration: 0.32,
-                delay: 0,
-                usingSpringWithDamping: 0.72,
-                initialSpringVelocity: 0,
-                options: [.curveEaseOut, .allowUserInteraction],
-                animations: {
-                    self.collectionView.transform = .identity
-                    self.collectionView.layoutIfNeeded()
-                },
-                completion: { [weak self] _ in
-                    self?.relativeScale = 1.0
-                }
-            )
+            break
 
         default:
             break
@@ -538,12 +481,12 @@ extension MediaPreviewViewController: UICollectionViewDelegate, UICollectionView
 
     private func showDetail(for entry: MediaEntry) {
         let sortedEntries = MediaStorageManager.shared.entries
-        guard let index = sortedEntries.firstIndex(where: { $0.id == entry.id }) else {
-            let detailVC = MediaDetailViewController(entry: entry)
-            navigationController?.pushViewController(detailVC, animated: true)
-            return
+        let detailVC: MediaDetailViewController
+        if let index = sortedEntries.firstIndex(where: { $0.id == entry.id }) {
+            detailVC = MediaDetailViewController(entries: sortedEntries, initialIndex: index)
+        } else {
+            detailVC = MediaDetailViewController(entry: entry)
         }
-        let detailVC = MediaDetailViewController(entries: sortedEntries, initialIndex: index)
         detailVC.hidesBottomBarWhenPushed = true
         navigationController?.pushViewController(detailVC, animated: true)
     }
