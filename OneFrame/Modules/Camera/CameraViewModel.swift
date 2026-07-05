@@ -212,8 +212,12 @@ final class CameraViewModel {
         pipeline.filterEffect.setFilter(filter)
     }
 
-    func setAppNameWatermarkRemoved(_ removed: Bool) {
-        pipeline.setAppNameWatermarkRemoved(removed)
+    func setPremium(_ premium: Bool) {
+        pipeline.setPremium(premium)
+    }
+
+    func setBrandWatermarkHidden(_ hidden: Bool) {
+        pipeline.setBrandWatermarkHidden(hidden)
     }
 
     func setInfoWatermarkHidden(_ hidden: Bool) {

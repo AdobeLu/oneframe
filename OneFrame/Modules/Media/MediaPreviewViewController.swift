@@ -80,6 +80,18 @@ final class MediaPreviewViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        title = OWLocalized("gallery.title")
+        emptyLabel.text = OWLocalized("gallery.empty")
+        refreshRightBarButton()
+        if isSelectionMode {
+            navigationItem.leftBarButtonItem = UIBarButtonItem(
+                title: OWLocalized("common.cancel"),
+                style: .plain,
+                target: self,
+                action: #selector(toggleSelectionMode)
+            )
+            updateSelectionToolbar()
+        }
         reloadData()
     }
 
@@ -89,11 +101,13 @@ final class MediaPreviewViewController: UIViewController {
         view.backgroundColor = .systemBackground
         title = OWLocalized("gallery.title")
 
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: OWLocalized("gallery.select"),
-            style: .plain,
-            target: self,
-            action: #selector(toggleSelectionMode)
+        refreshRightBarButton()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageDidChange),
+            name: .languageDidChange,
+            object: nil
         )
 
         collectionView.backgroundColor = .systemBackground
@@ -182,7 +196,7 @@ final class MediaPreviewViewController: UIViewController {
             topLine.heightAnchor.constraint(equalToConstant: 0.5),
 
             selectionCountLabel.centerYAnchor.constraint(equalTo: selectionToolbar.centerYAnchor),
-            selectionCountLabel.centerXAnchor.constraint(equalTo: selectionToolbar.centerXAnchor),
+            selectionCountLabel.leadingAnchor.constraint(equalTo: selectionToolbar.leadingAnchor, constant: 20),
 
             stack.centerYAnchor.constraint(equalTo: selectionToolbar.centerYAnchor),
             stack.trailingAnchor.constraint(equalTo: selectionToolbar.trailingAnchor, constant: -20),
@@ -236,6 +250,44 @@ final class MediaPreviewViewController: UIViewController {
 
     // MARK: - Selection UI
 
+    /// 刷新右上角按钮文本（国际化 + 模式切换）
+    private func refreshRightBarButton() {
+        if isSelectionMode {
+            let title = (selectedIndices.count == entries.count && entries.count > 0)
+                ? OWLocalized("gallery.deselect_all")
+                : OWLocalized("gallery.select_all")
+            navigationItem.rightBarButtonItem = UIBarButtonItem(
+                title: title,
+                style: .plain,
+                target: self,
+                action: #selector(toggleSelectAll)
+            )
+        } else {
+            navigationItem.rightBarButtonItem = UIBarButtonItem(
+                title: OWLocalized("gallery.select"),
+                style: .plain,
+                target: self,
+                action: #selector(toggleSelectionMode)
+            )
+        }
+    }
+
+    @objc private func languageDidChange() {
+        title = OWLocalized("gallery.title")
+        emptyLabel.text = OWLocalized("gallery.empty")
+        refreshRightBarButton()
+        if isSelectionMode {
+            navigationItem.leftBarButtonItem = UIBarButtonItem(
+                title: OWLocalized("common.cancel"),
+                style: .plain,
+                target: self,
+                action: #selector(toggleSelectionMode)
+            )
+            updateSelectionToolbar()
+        }
+        collectionView.reloadData()
+    }
+
     private func updateUIForSelectionMode() {
         if isSelectionMode {
             navigationItem.title = nil
@@ -246,26 +298,29 @@ final class MediaPreviewViewController: UIViewController {
                 action: #selector(toggleSelectionMode)
             )
             updateSelectionToolbar()
+            refreshRightBarButton()
             selectionToolbar.isHidden = false
-            collectionView.contentInset.bottom = 56
+            // 隐藏系统 tabBar，避免与底部工具栏冲突
+            tabBarController?.tabBar.isHidden = true
             collectionView.verticalScrollIndicatorInsets.bottom = 56
+            // 刷新所有可见 cell 进入选择模式
+            collectionView.visibleCells.compactMap { $0 as? MediaThumbnailCell }.forEach {
+                $0.isSelectionMode = true
+                $0.setSelected(false, animated: true)
+            }
         } else {
             navigationItem.title = OWLocalized("gallery.title")
             navigationItem.leftBarButtonItem = nil
-            navigationItem.rightBarButtonItem = UIBarButtonItem(
-                title: OWLocalized("gallery.select"),
-                style: .plain,
-                target: self,
-                action: #selector(toggleSelectionMode)
-            )
+            refreshRightBarButton()
             selectedIndices.removeAll()
             selectionToolbar.isHidden = true
-            collectionView.contentInset.bottom = 0
+            tabBarController?.tabBar.isHidden = false
             collectionView.verticalScrollIndicatorInsets.bottom = 0
             collectionView.indexPathsForSelectedItems?.forEach {
                 collectionView.deselectItem(at: $0, animated: false)
             }
             collectionView.visibleCells.compactMap { $0 as? MediaThumbnailCell }.forEach {
+                $0.isSelectionMode = false
                 $0.setSelected(false, animated: false)
             }
         }
@@ -274,21 +329,7 @@ final class MediaPreviewViewController: UIViewController {
     private func updateSelectionToolbar() {
         let count = selectedIndices.count
         selectionCountLabel.text = String(format: OWLocalized("gallery.items_count"), count)
-        if count == entries.count && count > 0 {
-            navigationItem.rightBarButtonItem = UIBarButtonItem(
-                title: OWLocalized("gallery.deselect_all"),
-                style: .plain,
-                target: self,
-                action: #selector(toggleSelectAll)
-            )
-        } else {
-            navigationItem.rightBarButtonItem = UIBarButtonItem(
-                title: OWLocalized("gallery.select_all"),
-                style: .plain,
-                target: self,
-                action: #selector(toggleSelectAll)
-            )
-        }
+        refreshRightBarButton()
     }
 
     // MARK: - Data
@@ -369,14 +410,24 @@ final class MediaPreviewViewController: UIViewController {
 
     @objc private func toggleSelectAll() {
         if selectedIndices.count == entries.count {
+            // 取消全选
             selectedIndices.removeAll()
-            collectionView.indexPathsForSelectedItems?.forEach {
-                collectionView.deselectItem(at: $0, animated: true)
+            for i in 0..<entries.count {
+                let ip = IndexPath(item: i, section: 0)
+                collectionView.deselectItem(at: ip, animated: false)
+            }
+            collectionView.visibleCells.compactMap { $0 as? MediaThumbnailCell }.forEach {
+                $0.setSelected(false, animated: true)
             }
         } else {
+            // 全选
             selectedIndices = Set(0..<entries.count)
             for i in 0..<entries.count {
-                collectionView.selectItem(at: IndexPath(item: i, section: 0), animated: true, scrollPosition: [])
+                let ip = IndexPath(item: i, section: 0)
+                collectionView.selectItem(at: ip, animated: false, scrollPosition: [])
+            }
+            collectionView.visibleCells.compactMap { $0 as? MediaThumbnailCell }.forEach {
+                $0.setSelected(true, animated: true)
             }
         }
         updateSelectionToolbar()
@@ -526,51 +577,65 @@ final class MediaThumbnailCell: UICollectionViewCell {
             imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
         ])
 
+        // 选择模式叠加层 - 覆盖整个 cell 提供半透明蒙版
+        selectionOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+        selectionOverlay.isHidden = true
+        selectionOverlay.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(selectionOverlay)
+        NSLayoutConstraint.activate([
+            selectionOverlay.topAnchor.constraint(equalTo: contentView.topAnchor),
+            selectionOverlay.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            selectionOverlay.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            selectionOverlay.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        ])
+
+        // 勾选图标 - 右上角，白色圆形底 + 蓝色对勾
+        checkmarkView.image = UIImage(systemName: "checkmark.circle.fill",
+                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .bold))
+        checkmarkView.tintColor = .systemBlue
+        checkmarkView.backgroundColor = .white
+        checkmarkView.layer.cornerRadius = 14
+        checkmarkView.clipsToBounds = true
+        checkmarkView.isHidden = true
+        checkmarkView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(checkmarkView)
+        NSLayoutConstraint.activate([
+            checkmarkView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            checkmarkView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            checkmarkView.widthAnchor.constraint(equalToConstant: 28),
+            checkmarkView.heightAnchor.constraint(equalToConstant: 28)
+        ])
+
+        // 视频/照片标记置于叠加层之上
         typeBadge.tintColor = .white
         contentView.addSubview(typeBadge)
         typeBadge.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            typeBadge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+            typeBadge.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
             typeBadge.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
             typeBadge.widthAnchor.constraint(equalToConstant: 16),
             typeBadge.heightAnchor.constraint(equalToConstant: 16)
         ])
-
-        selectionOverlay.isHidden = true
-        selectionOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.25)
-        selectionOverlay.layer.cornerRadius = 16
-        selectionOverlay.layer.borderWidth = 2
-        selectionOverlay.layer.borderColor = UIColor.white.cgColor
-        selectionOverlay.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(selectionOverlay)
-        NSLayoutConstraint.activate([
-            selectionOverlay.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
-            selectionOverlay.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -6),
-            selectionOverlay.widthAnchor.constraint(equalToConstant: 28),
-            selectionOverlay.heightAnchor.constraint(equalToConstant: 28)
-        ])
-
-        checkmarkView.image = UIImage(systemName: "checkmark.circle.fill",
-                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .medium))
-        checkmarkView.tintColor = .systemBlue
-        checkmarkView.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(checkmarkView)
-        NSLayoutConstraint.activate([
-            checkmarkView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
-            checkmarkView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
-            checkmarkView.widthAnchor.constraint(equalToConstant: 28),
-            checkmarkView.heightAnchor.constraint(equalToConstant: 28)
-        ])
-        checkmarkView.isHidden = true
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        imageView.image = nil
+        imageView.transform = .identity
+        selectionOverlay.isHidden = true
+        checkmarkView.isHidden = true
+        selectionOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+    }
+
     func configure(imageURL: URL, type: MediaType) {
         if let data = try? Data(contentsOf: imageURL) {
             imageView.image = UIImage(data: data)
+        } else {
+            imageView.image = nil
         }
         typeBadge.image = type == .video
             ? UIImage(systemName: "video.fill")
@@ -579,16 +644,21 @@ final class MediaThumbnailCell: UICollectionViewCell {
 
     func setSelected(_ selected: Bool, animated: Bool) {
         let changes = {
-            self.selectionOverlay.isHidden = !self.isSelectionMode
-            self.checkmarkView.isHidden = !selected || !self.isSelectionMode
-            if selected && self.isSelectionMode {
-                self.selectionOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.45)
-            } else if self.isSelectionMode {
-                self.selectionOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.15)
+            if self.isSelectionMode {
+                self.selectionOverlay.isHidden = false
+                self.selectionOverlay.backgroundColor = selected
+                    ? UIColor.systemBlue.withAlphaComponent(0.35)
+                    : UIColor.black.withAlphaComponent(0.22)
+                self.checkmarkView.isHidden = !selected
+                self.imageView.transform = selected ? CGAffineTransform(scaleX: 0.88, y: 0.88) : .identity
+            } else {
+                self.selectionOverlay.isHidden = true
+                self.checkmarkView.isHidden = true
+                self.imageView.transform = .identity
             }
         }
         if animated {
-            UIView.animate(withDuration: 0.2, animations: changes)
+            UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: [.curveEaseOut], animations: changes)
         } else {
             changes()
         }

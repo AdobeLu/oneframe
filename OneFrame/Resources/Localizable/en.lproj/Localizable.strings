@@ -13,18 +13,26 @@
 
 "setting.title" = "Settings";
 "setting.language" = "Language";
-"setting.remove_watermark" = "Remove Watermark";
-"setting.restore_purchase" = "Restore Purchase";
+"setting.premium_membership" = "OneFrame Premium";
+"setting.watermark" = "Hide Logo Watermark";
+"setting.watermark_footer" = "Subscribe to Premium to hide the brand watermark";
 "setting.privacy_policy" = "Privacy Policy";
 "setting.about" = "About";
 "setting.rate" = "Rate Us";
 
-"purchase.title" = "Remove Watermark";
-"purchase.description" = "One-time purchase to permanently remove the OneFrame watermark from your photos and videos.";
-"purchase.buy" = "Buy";
+"purchase.title" = "OneFrame Premium";
+"purchase.member_title" = "OneFrame Premium";
+"purchase.member_subtitle" = "One-time purchase to permanently remove the OneFrame brand watermark.";
+"purchase.feature_watermark" = "Remove OneFrame brand watermark";
+"purchase.buy" = "Buy Now";
+"purchase.restore" = "Restore Purchase";
 "purchase.restoring" = "Restoring purchase...";
 "purchase.purchased" = "Purchased";
 "purchase.failed" = "Purchase failed, please try again";
+"purchase.restore_failed" = "No purchase record found. Please make sure you're using the same Apple ID.";
+"purchase.success_title" = "Purchase Successful";
+"purchase.success_message" = "You are now a OneFrame Premium member. The brand watermark has been removed. Thank you for your support!";
+"purchase.legal" = "Payment will be charged to your Apple ID account. Premium membership is a one-time purchase with lifetime access.";
 
 "gallery.title" = "Gallery";
 "gallery.empty" = "No media yet, start shooting!";

@@ -106,19 +106,20 @@ final class CameraViewController: UIViewController {
         setupViewModel()
         setupNotifications()
 
-        // 请求定位权限获取水印信息
+        // 预请求定位权限（不立即启动 GPS），待用户开启信息水印时才真正定位
         LocationService.shared.requestPermission()
-        LocationService.shared.startUpdating { _, _ in
-            // 水印会自动根据位置更新
-        }
 
-        // 内购状态：同步 App 名称水印（"同框相机"）- 付费后移除
-        viewModel.setAppNameWatermarkRemoved(IAPManager.shared.isWatermarkRemoved)
+        // 内购状态：高级会员移除 "同框相机" App 名称水印
+        viewModel.setPremium(IAPManager.shared.isPremium)
+
+        // 同步品牌 Logo 水印开关（从设置页 UserDefaults 读取）
+        syncBrandWatermarkSetting()
 
         // 信息水印（时间/地点/设备）初始可见，由用户开关按钮控制
         isInfoWatermarkVisible = true
         viewModel.setInfoWatermarkHidden(!isInfoWatermarkVisible)
         updateWatermarkButtonAppearance()
+        updateLocationTracking()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -126,7 +127,8 @@ final class CameraViewController: UIViewController {
         captureSessionManager.startSession()
 
         // 重新同步内购状态（用户可能从设置页购买后返回）
-        viewModel.setAppNameWatermarkRemoved(IAPManager.shared.isWatermarkRemoved)
+        viewModel.setPremium(IAPManager.shared.isPremium)
+        syncBrandWatermarkSetting()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -136,6 +138,9 @@ final class CameraViewController: UIViewController {
         // 协调多路摄像头硬件资源，导致从设置页切回拍照时有明显黑屏延迟。
         // 统一由 SceneDelegate.sceneDidEnterBackground 在真后台时停止，
         // sceneDidBecomeActive / viewDidAppear 在回到前台时恢复。
+
+        // GPS 是耗电大户，离开相机页面时停止定位
+        LocationService.shared.stopUpdating()
     }
 
     override func viewDidLayoutSubviews() {
@@ -770,10 +775,20 @@ final class CameraViewController: UIViewController {
         isInfoWatermarkVisible.toggle()
         viewModel.setInfoWatermarkHidden(!isInfoWatermarkVisible)
         updateWatermarkButtonAppearance()
+        updateLocationTracking()
     }
 
     /// 时间/地点/设备信息水印是否可见（用户手动开关，免费功能）
     private var isInfoWatermarkVisible = true
+
+    /// UserDefaults key for brand watermark toggle
+    private static let brandWatermarkHiddenKey = "OneFrame.BrandWatermarkHidden"
+
+    /// 从 UserDefaults 同步品牌 Logo 水印开关状态到渲染管线
+    private func syncBrandWatermarkSetting() {
+        let hidden = UserDefaults.standard.bool(forKey: Self.brandWatermarkHiddenKey)
+        viewModel.setBrandWatermarkHidden(hidden)
+    }
 
     private func updateWatermarkButtonAppearance() {
         let iconName = isInfoWatermarkVisible ? "info.circle" : "info.circle.fill"
@@ -784,6 +799,18 @@ final class CameraViewController: UIViewController {
         watermarkToggleButton.tintColor = isInfoWatermarkVisible
             ? UIColor.white.withAlphaComponent(0.8)
             : UIColor.white.withAlphaComponent(0.35)
+    }
+
+    /// 根据信息水印开关状态动态管理 GPS：开启时定位，关闭时停止
+    /// GPS 是手机第二大耗电/发热源（仅次于屏幕和摄像头），不需要时不启动
+    private func updateLocationTracking() {
+        if isInfoWatermarkVisible {
+            LocationService.shared.startUpdating { _, _ in
+                // 水印会自动根据位置更新
+            }
+        } else {
+            LocationService.shared.stopUpdating()
+        }
     }
 
     private func updateFlashButtonAppearance(for mode: TorchMode) {

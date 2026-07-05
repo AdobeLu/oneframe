@@ -19,8 +19,10 @@ final class WatermarkEffect {
     private var appName: String {
         LanguageManager.shared.currentLanguage == .chinese ? "同框相机" : "OneFrame"
     }
-    /// 内购后移除 "同框相机" App 名称水印（付费功能）
-    private var isAppNameWatermarkRemoved: Bool = false
+    /// 高级会员后移除 "同框相机" App 名称水印
+    private var isPremium: Bool = false
+    /// 用户手动开关品牌 Logo 水印（仅高级会员生效）
+    private var isBrandWatermarkHidden: Bool = false
     /// 用户手动开关时间/地点/设备信息水印（免费开关）
     private var isInfoWatermarkHidden: Bool = false
 
@@ -39,8 +41,13 @@ final class WatermarkEffect {
     private var cachedWeatherStr: String = ""
     private var cachedDeviceInfo: String = ""
     private var cachedAppName: String = ""
-    private var cachedAppNameRemoved: Bool = false
+    private var cachedPremiumStatus: Bool = false
+    private var cachedBrandHidden: Bool = false
     private var cachedInfoHidden: Bool = false
+
+    /// 上次格式化时间的整数秒，用于避免每帧调用 DateFormatter
+    /// DateFormatter 开销虽不大，但 30fps × 2 次/帧 = 每秒 60 次纯属浪费
+    private var cachedSecond: Int = -1
 
     private lazy var sourceOverFilter: CIFilter? = {
         CIFilter(name: "CISourceOverCompositing")
@@ -60,8 +67,13 @@ final class WatermarkEffect {
 
     // MARK: - Public
 
-    func setAppNameWatermarkRemoved(_ removed: Bool) {
-        isAppNameWatermarkRemoved = removed
+    func setPremium(_ premium: Bool) {
+        isPremium = premium
+        cachedWatermarkImage = nil
+    }
+
+    func setBrandWatermarkHidden(_ hidden: Bool) {
+        isBrandWatermarkHidden = hidden
         cachedWatermarkImage = nil
     }
 
@@ -71,7 +83,8 @@ final class WatermarkEffect {
     }
 
     func apply(to image: CIImage, canvasSize: CGSize) -> CIImage {
-        if isAppNameWatermarkRemoved && isInfoWatermarkHidden {
+        // 高级会员关闭了品牌水印 且 信息水印也关闭 → 不渲染任何水印
+        if isInfoWatermarkHidden && (isPremium && isBrandWatermarkHidden) {
             return image
         }
 
@@ -90,9 +103,23 @@ final class WatermarkEffect {
     private func getCachedWatermark(canvasSize: CGSize) -> CIImage? {
         let sizeChanged = canvasSize != cachedCanvasSize
 
+        // 秒级时间戳快速路径：时间每秒才变一次，避免每帧 2 次 DateFormatter
+        // 直接用 Calendar 取秒分量，比 DateFormatter 开销低一个数量级
         let now = Date()
-        let dateStr = dateFormatter.string(from: now)
-        let timeStr = timeFormatter.string(from: now)
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: now)
+        let currentSecond = components.second ?? 0
+
+        // 每秒只执行一次 DateFormatter
+        let dateStr: String
+        let timeStr: String
+        if currentSecond != cachedSecond || sizeChanged {
+            dateStr = dateFormatter.string(from: now)
+            timeStr = timeFormatter.string(from: now)
+        } else {
+            dateStr = cachedDateStr
+            timeStr = cachedTimeStr
+        }
+
         let coordinateStr = LocationService.shared.coordinateString
         let cityName = LocationService.shared.cityName
         let weatherStr = WeatherService.shared.currentWeather ?? ""
@@ -107,7 +134,8 @@ final class WatermarkEffect {
             || weatherStr != cachedWeatherStr
             || deviceStr != cachedDeviceInfo
             || currentAppName != cachedAppName
-            || isAppNameWatermarkRemoved != cachedAppNameRemoved
+            || isPremium != cachedPremiumStatus
+            || isBrandWatermarkHidden != cachedBrandHidden
             || isInfoWatermarkHidden != cachedInfoHidden
 
         if !contentChanged, let cached = cachedWatermarkImage {
@@ -127,12 +155,14 @@ final class WatermarkEffect {
         cachedCanvasSize = canvasSize
         cachedDateStr = dateStr
         cachedTimeStr = timeStr
+        cachedSecond = currentSecond
         cachedCoordinateStr = coordinateStr
         cachedCityName = cityName
         cachedWeatherStr = weatherStr
         cachedDeviceInfo = deviceStr
         cachedAppName = currentAppName
-        cachedAppNameRemoved = isAppNameWatermarkRemoved
+        cachedPremiumStatus = isPremium
+        cachedBrandHidden = isBrandWatermarkHidden
         cachedInfoHidden = isInfoWatermarkHidden
         return newWatermark
     }
@@ -167,7 +197,7 @@ final class WatermarkEffect {
                 )
             }
 
-            if !isAppNameWatermarkRemoved {
+            if !(isPremium && isBrandWatermarkHidden) {
                 renderAppNameWatermark(context: ctx, canvasSize: canvasSize)
             }
         }

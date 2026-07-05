@@ -11,8 +11,8 @@ final class DeviceInfoService {
 
     static let shared = DeviceInfoService()
 
-    /// 设备型号名称（如 iPhone 15 Pro）
-    var modelName: String {
+    /// 设备型号名称（如 iPhone 15 Pro），懒加载一次后缓存，设备型号永远不变
+    private lazy var cachedModelName: String = {
         var systemInfo = utsname()
         uname(&systemInfo)
         let machineMirror = Mirror(reflecting: systemInfo.machine)
@@ -21,7 +21,9 @@ final class DeviceInfoService {
             return identifier + String(UnicodeScalar(UInt8(value)))
         }
         return mapToDeviceName(identifier: identifier)
-    }
+    }()
+
+    var modelName: String { cachedModelName }
 
     /// 系统版本
     var systemVersion: String {
@@ -33,10 +35,12 @@ final class DeviceInfoService {
         UIDevice.current.systemName
     }
 
-    /// 完整系统信息字符串
-    var fullSystemInfo: String {
+    /// 完整系统信息字符串，懒加载缓存避免每帧拼接
+    private lazy var cachedFullSystemInfo: String = {
         "\(systemName) \(systemVersion)"
-    }
+    }()
+
+    var fullSystemInfo: String { cachedFullSystemInfo }
 
     // MARK: - Private
 

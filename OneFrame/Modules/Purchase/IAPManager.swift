@@ -2,7 +2,7 @@
 //  IAPManager.swift
 //  OneFrame
 //
-//  StoreKit 2 内购管理器
+//  StoreKit 2 内购管理器 - 同框相机高级会员
 //
 
 import StoreKit
@@ -17,16 +17,17 @@ final class IAPManager: ObservableObject {
 
     // MARK: - Product ID
 
-    private let removeWatermarkID = "com.oneframe.remove_watermark"
+    private let premiumID = "com.feiyuntech.OneFrame.Premium"
 
     // MARK: - State
 
-    @Published private(set) var isWatermarkRemoved = false
+    /// 是否为高级会员（已购买去水印等增值功能）
+    @Published private(set) var isPremium = false
     @Published private(set) var isLoading = false
     @Published private(set) var purchaseError: String?
 
-    /// 可购买的商品
-    @Published private(set) var removeWatermarkProduct: Product?
+    /// 可购买的高级会员商品
+    @Published private(set) var premiumProduct: Product?
 
     private var updatesTask: Task<Void, Never>?
 
@@ -52,8 +53,8 @@ final class IAPManager: ObservableObject {
 
     func loadProducts() async {
         do {
-            let products = try await Product.products(for: [removeWatermarkID])
-            removeWatermarkProduct = products.first
+            let products = try await Product.products(for: [premiumID])
+            premiumProduct = products.first
         } catch {
             print("Failed to load products: \(error)")
         }
@@ -62,7 +63,7 @@ final class IAPManager: ObservableObject {
     // MARK: - Purchase
 
     func purchase() async {
-        guard let product = removeWatermarkProduct else {
+        guard let product = premiumProduct else {
             purchaseError = "Product not available"
             return
         }
@@ -77,7 +78,7 @@ final class IAPManager: ObservableObject {
             case .success(let verification):
                 if case .verified(let transaction) = verification {
                     await handleVerifiedTransaction(transaction)
-                    isWatermarkRemoved = true
+                    // isPremium 已在 handleVerifiedTransaction 中根据 revocationDate 正确设置
                 } else {
                     purchaseError = "Transaction unverified"
                 }
@@ -98,6 +99,8 @@ final class IAPManager: ObservableObject {
         isLoading = false
     }
 
+    // MARK: - Restore Purchases
+
     func restorePurchases() async {
         isLoading = true
         purchaseError = nil
@@ -117,25 +120,21 @@ final class IAPManager: ObservableObject {
     func checkEntitlements() async {
         for await result in Transaction.currentEntitlements {
             if case .verified(let transaction) = result {
-                if transaction.productID == removeWatermarkID {
-                    if let revocationDate = transaction.revocationDate {
-                        isWatermarkRemoved = revocationDate < Date()
-                    } else {
-                        isWatermarkRemoved = true
-                    }
+                if transaction.productID == premiumID {
+                    // revocationDate 非 nil 表示已退款，nil 表示有效购买
+                    isPremium = (transaction.revocationDate == nil)
                     return
                 }
             }
         }
+        // 未找到有效凭证，确保状态为未购买
+        isPremium = false
     }
 
     private func handleVerifiedTransaction(_ transaction: Transaction) async {
-        if transaction.productID == removeWatermarkID {
-            if let revocationDate = transaction.revocationDate {
-                isWatermarkRemoved = revocationDate < Date()
-            } else {
-                isWatermarkRemoved = true
-            }
+        if transaction.productID == premiumID {
+            // revocationDate 非 nil 表示已退款，nil 表示有效购买
+            isPremium = (transaction.revocationDate == nil)
         }
         await transaction.finish()
     }

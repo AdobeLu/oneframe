@@ -13,18 +13,26 @@
 
 "setting.title" = "设置";
 "setting.language" = "语言";
-"setting.remove_watermark" = "去除水印";
-"setting.restore_purchase" = "恢复购买";
+"setting.premium_membership" = "高级会员";
+"setting.watermark" = "关闭 Logo 水印";
+"setting.watermark_footer" = "开通高级会员后可关闭品牌水印";
 "setting.privacy_policy" = "隐私政策";
 "setting.about" = "关于";
 "setting.rate" = "给我们评分";
 
-"purchase.title" = "去除水印";
-"purchase.description" = "一次性购买，永久去除照片和视频上的 OneFrame 水印。";
-"purchase.buy" = "购买";
+"purchase.title" = "高级会员";
+"purchase.member_title" = "高级会员";
+"purchase.member_subtitle" = "一次购买，永久去除「同框相机」品牌水印。";
+"purchase.feature_watermark" = "去除「同框相机」品牌水印";
+"purchase.buy" = "立即购买";
+"purchase.restore" = "恢复购买";
 "purchase.restoring" = "正在恢复购买...";
 "purchase.purchased" = "已购买";
 "purchase.failed" = "购买失败，请重试";
+"purchase.restore_failed" = "未找到购买记录，请确认已使用同一 Apple ID 购买";
+"purchase.success_title" = "购买成功";
+"purchase.success_message" = "您已是同框相机高级会员，品牌水印已自动移除。感谢支持！";
+"purchase.legal" = "购买将记入您的 Apple ID 账户。高级会员为一次性购买，永久有效。";
 
 "gallery.title" = "相册";
 "gallery.empty" = "还没有任何作品，快去拍摄吧！";

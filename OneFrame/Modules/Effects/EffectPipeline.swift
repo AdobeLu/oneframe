@@ -54,9 +54,14 @@ final class EffectPipeline {
         return mosaiced
     }
 
-    /// 内购：移除 App 名称水印（"同框相机"）
-    func setAppNameWatermarkRemoved(_ removed: Bool) {
-        watermarkEffect.setAppNameWatermarkRemoved(removed)
+    /// 高级会员：移除 "同框相机" App 名称水印
+    func setPremium(_ premium: Bool) {
+        watermarkEffect.setPremium(premium)
+    }
+
+    /// 用户手动开关品牌 Logo 水印（仅高级会员生效）
+    func setBrandWatermarkHidden(_ hidden: Bool) {
+        watermarkEffect.setBrandWatermarkHidden(hidden)
     }
 
     /// 用户手动开关时间/地点/设备信息水印
