@@ -235,13 +235,16 @@ final class CaptureSessionManager: NSObject {
         ) { [weak self] _ in
             guard let self = self else { return }
             print("CaptureSession interruption ended, resuming...")
-            // 中断结束后立即恢复 session
-            if let session = self.multiCamSession, !session.isRunning {
-                session.startRunning()
-                self.isSessionRunning = session.isRunning
-            }
-            DispatchQueue.main.async {
-                self.delegate?.captureSessionManagerInterruptionEnded(self)
+            // ⚠️ MultiCamSession.startRunning() 启动三路摄像头需 1-2s，
+            //    必须放后台队列执行，否则阻塞主线程（StoreKit 弹窗 dismiss 后卡 5s 的元凶）
+            self.sessionQueue.async {
+                if let session = self.multiCamSession, !session.isRunning {
+                    session.startRunning()
+                    self.isSessionRunning = session.isRunning
+                }
+                DispatchQueue.main.async {
+                    self.delegate?.captureSessionManagerInterruptionEnded(self)
+                }
             }
         }
 

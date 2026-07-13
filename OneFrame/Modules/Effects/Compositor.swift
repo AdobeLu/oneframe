@@ -2,11 +2,40 @@
 //  Compositor.swift
 //  OneFrame
 //
-//  双画面合成器 - 将前后摄像头画面合成为一帧
+//  双画面合成器 - 支持多种布局模式（画中画 / 上下分屏 / 左右分屏）
 //
 
 import CoreImage
 import UIKit
+
+/// 双画面布局模式
+enum LayoutMode: Int, CaseIterable {
+    /// 仅显示后置画面（不显示前置）
+    case off
+    /// 画中画小窗（自由拖动/缩放）
+    case pip
+    /// 上下分屏（上：前置，下：后置）
+    case splitVertical
+    /// 左右分屏（左：后置，右：前置）
+    case splitHorizontal
+
+    /// 下一个布局模式（循环切换）
+    var next: LayoutMode {
+        let all = LayoutMode.allCases
+        let idx = (all.firstIndex(of: self)! + 1) % all.count
+        return all[idx]
+    }
+
+    /// 按钮图标 SF Symbol 名称
+    var sfSymbolName: String {
+        switch self {
+        case .off:             return "rectangle.fill"
+        case .pip:             return "pip.enter"
+        case .splitVertical:   return "rectangle.split.2x1"
+        case .splitHorizontal: return "rectangle.split.1x2"
+        }
+    }
+}
 
 final class Compositor {
 
@@ -15,8 +44,7 @@ final class Compositor {
     /// 输出画布尺寸
     private(set) var canvasSize: CGSize
 
-    /// PIP 配置
-    /// position 使用左上角锚点，归一化到 [0,1] 范围，基于 CIImage 坐标系 (y-up, 原点在左下)
+    /// PIP 配置（仅在 .pip 模式下生效）
     struct PIPConfig {
         var position: CGPoint = CGPoint(x: 0.69, y: 0.38)
         var size: CGSize = CGSize(width: 0.30, height: 0.40)
@@ -28,7 +56,10 @@ final class Compositor {
         size: CGSize(width: 0.30, height: 0.40)
     )
 
-    // MARK: - Reusable CIFilters (避免每帧通过字符串查找重建)
+    /// 分屏模式下的分割比例（前后画面各占比例，0.5 = 各半）
+    private static let splitRatio: CGFloat = 0.5
+
+    // MARK: - Reusable CIFilters
 
     private lazy var sourceOverFilter: CIFilter? = {
         CIFilter(name: "CISourceOverCompositing")
@@ -59,68 +90,132 @@ final class Compositor {
     }
 
     /// 合成前后画面
-    /// foreground 为 nil 时仅返回缩放后的背景（PIP 关闭）
+    /// - Parameters:
+    ///   - background: 后置摄像头画面
+    ///   - foreground: 前置摄像头画面（nil 时仅显示背景）
+    ///   - mode: 布局模式
+    ///   - config: PIP 配置（仅 .pip 模式生效）
     func composite(
-        background: CIImage,    // 后置摄像头画面
-        foreground: CIImage?,   // 前置摄像头画面(PIP)，nil 表示关闭 PIP
+        background: CIImage,
+        foreground: CIImage?,
+        mode: LayoutMode = .off,
         config: PIPConfig? = nil
     ) -> CIImage {
-        let cfg = config ?? pipConfig
-
-        // 1. 背景 AspectFill 到画布，居中裁剪（复用 CIFilter 实例）
-        let scaledBackground = background.scaledToFill(size: canvasSize, scaleFilter: lanczosScaleFilter)
-
-        // 前景为空时直接返回背景（PIP 关闭）
-        guard let foreground = foreground else {
-            return scaledBackground
+        // 前景为空或模式为 off → 仅返回背景
+        guard let foreground = foreground, mode != .off else {
+            return background.scaledToFill(size: canvasSize, scaleFilter: lanczosScaleFilter)
         }
+
+        switch mode {
+        case .off:
+            return background.scaledToFill(size: canvasSize, scaleFilter: lanczosScaleFilter)
+        case .pip:
+            return compositePIP(background: background, foreground: foreground, config: config ?? pipConfig)
+        case .splitVertical:
+            return compositeSplitVertical(background: background, foreground: foreground)
+        case .splitHorizontal:
+            return compositeSplitHorizontal(background: background, foreground: foreground)
+        }
+    }
+
+    // MARK: - PIP 画中画
+
+    private func compositePIP(
+        background: CIImage,
+        foreground: CIImage,
+        config: PIPConfig
+    ) -> CIImage {
+        let cfg = config
+
+        // 1. 背景 AspectFill 到画布
+        let scaledBackground = background.scaledToFill(size: canvasSize, scaleFilter: lanczosScaleFilter)
 
         // 2. 计算 PIP 实际尺寸
         let pipWidth = canvasSize.width * cfg.size.width
         let pipHeight = canvasSize.height * cfg.size.height
         let pipSize = CGSize(width: pipWidth, height: pipHeight)
 
-        // 3. 前景缩放到 PIP 尺寸（AspectFill 居中裁剪）
+        // 3. 前景缩放
         let scaledForeground = foreground.scaledToFill(size: pipSize, scaleFilter: lanczosScaleFilter)
 
-        // 4. PIP 位置（从归一化转实际像素）
-        //    position 表示 CIImage 坐标系中的左上角 (y-up, 原点左下)
+        // 4. PIP 位置
         let pipOriginX = canvasSize.width * cfg.position.x
         let pipOriginY = canvasSize.height * cfg.position.y
+        let pipOriginX_clamped = max(0, min(canvasSize.width - pipWidth, pipOriginX))
+        let pipOriginY_clamped = max(0, min(canvasSize.height - pipHeight, pipOriginY))
 
-        var pipOrigin = CGPoint(x: pipOriginX, y: pipOriginY)
-
-        // 边界保护
-        pipOrigin.x = max(0, min(canvasSize.width - pipWidth, pipOrigin.x))
-        pipOrigin.y = max(0, min(canvasSize.height - pipHeight, pipOrigin.y))
-
-        // 5. 圆角裁剪 PIP
+        // 5. 圆角裁剪
         let roundedForeground = applyCornerRadius(
             to: scaledForeground,
             radius: cfg.cornerRadius * canvasSize.width,
             size: pipSize
         )
 
-        // 6. 将 PIP 移动到指定位置
+        // 6. 移动到指定位置
         let movedForeground = roundedForeground.transformed(
-            by: CGAffineTransform(translationX: pipOrigin.x, y: pipOrigin.y)
+            by: CGAffineTransform(translationX: pipOriginX_clamped, y: pipOriginY_clamped)
         )
 
-        // 7. 合成（复用 CIFilter 实例，避免每帧字符串查找）
-        guard let compositorFilter = sourceOverFilter else {
-            return scaledBackground
-        }
-
+        // 7. 合成
+        guard let compositorFilter = sourceOverFilter else { return scaledBackground }
         compositorFilter.setValue(movedForeground, forKey: kCIInputImageKey)
         compositorFilter.setValue(scaledBackground, forKey: kCIInputBackgroundImageKey)
 
         return compositorFilter.outputImage?.cropped(to: CGRect(origin: .zero, size: canvasSize)) ?? scaledBackground
     }
 
+    // MARK: - 上下分屏 (上: 前置, 下: 后置)
+
+    private func compositeSplitVertical(
+        background: CIImage,
+        foreground: CIImage
+    ) -> CIImage {
+        let halfHeight = canvasSize.height * Self.splitRatio
+        let topSize = CGSize(width: canvasSize.width, height: halfHeight)
+        let bottomSize = CGSize(width: canvasSize.width, height: canvasSize.height - halfHeight)
+
+        // 上：前置画面 AspectFill 到上半区域
+        let topImage = foreground.scaledToFill(size: topSize, scaleFilter: lanczosScaleFilter)
+            .transformed(by: CGAffineTransform(translationX: 0, y: canvasSize.height - halfHeight))
+
+        // 下：后置画面 AspectFill 到下半区域
+        let bottomImage = background.scaledToFill(size: bottomSize, scaleFilter: lanczosScaleFilter)
+
+        // 先合成下半部分（背景）+ 上半部分（前景）
+        guard let compositorFilter = sourceOverFilter else { return bottomImage }
+        compositorFilter.setValue(topImage, forKey: kCIInputImageKey)
+        compositorFilter.setValue(bottomImage, forKey: kCIInputBackgroundImageKey)
+
+        return compositorFilter.outputImage?.cropped(to: CGRect(origin: .zero, size: canvasSize)) ?? bottomImage
+    }
+
+    // MARK: - 左右分屏 (左: 后置, 右: 前置)
+
+    private func compositeSplitHorizontal(
+        background: CIImage,
+        foreground: CIImage
+    ) -> CIImage {
+        let halfWidth = canvasSize.width * Self.splitRatio
+        let leftSize = CGSize(width: halfWidth, height: canvasSize.height)
+        let rightSize = CGSize(width: canvasSize.width - halfWidth, height: canvasSize.height)
+
+        // 左：后置画面 AspectFill
+        let leftImage = background.scaledToFill(size: leftSize, scaleFilter: lanczosScaleFilter)
+
+        // 右：前置画面 AspectFill + 平移到右侧
+        let rightImage = foreground.scaledToFill(size: rightSize, scaleFilter: lanczosScaleFilter)
+            .transformed(by: CGAffineTransform(translationX: halfWidth, y: 0))
+
+        guard let compositorFilter = sourceOverFilter else { return leftImage }
+        compositorFilter.setValue(rightImage, forKey: kCIInputImageKey)
+        compositorFilter.setValue(leftImage, forKey: kCIInputBackgroundImageKey)
+
+        return compositorFilter.outputImage?.cropped(to: CGRect(origin: .zero, size: canvasSize)) ?? leftImage
+    }
+
     // MARK: - Private
 
     private func applyCornerRadius(to image: CIImage, radius: CGFloat, size: CGSize) -> CIImage {
-        // 使用圆形遮罩实现圆角（复用 CIFilter 实例）
         guard let maskGenerator = roundedRectGenerator,
               let blendFilter = blendWithMaskFilter else {
             return image
@@ -137,19 +232,14 @@ final class Compositor {
     }
 }
 
-// MARK: - CIImage Extension (扩展方法)
+// MARK: - CIImage Extension
 
 private extension CIImage {
     /// 缩放并居中裁剪到目标尺寸 (AspectFill)
-    /// 使用 CILanczosScaleTransform 进行高质量缩放，直接裁剪中心区域
-    /// - Parameters:
-    ///   - targetSize: 目标输出尺寸
-    ///   - scaleFilter: 可选的复用 CIFilter 实例，避免每帧通过字符串查找重建
     func scaledToFill(size targetSize: CGSize, scaleFilter: CIFilter? = nil) -> CIImage {
         guard extent.width > 0, extent.height > 0 else { return self }
         let scale = max(targetSize.width / extent.width, targetSize.height / extent.height)
 
-        // 优先使用传入的复用实例，否则创建新实例
         let filter = scaleFilter ?? CIFilter(name: "CILanczosScaleTransform")!
         filter.setValue(self, forKey: kCIInputImageKey)
         filter.setValue(scale, forKey: kCIInputScaleKey)
@@ -157,12 +247,10 @@ private extension CIImage {
 
         guard let scaled = filter.outputImage else { return self }
 
-        // 从缩放后图像的正中心裁剪出目标尺寸
         let cropX = (scaled.extent.width - targetSize.width) / 2 + scaled.extent.origin.x
         let cropY = (scaled.extent.height - targetSize.height) / 2 + scaled.extent.origin.y
         let cropped = scaled.cropped(to: CGRect(x: cropX, y: cropY, width: targetSize.width, height: targetSize.height))
 
-        // 将裁剪后的图像原点平移到 (0,0)，否则非零 origin 在合成时会产生黑边
         return cropped.transformed(by: CGAffineTransform(translationX: -cropped.extent.origin.x, y: -cropped.extent.origin.y))
     }
 }

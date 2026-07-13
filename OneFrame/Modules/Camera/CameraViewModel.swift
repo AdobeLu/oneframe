@@ -28,9 +28,9 @@ final class CameraViewModel {
     private(set) var latestBackImage: CIImage?
     private(set) var latestFrontImage: CIImage?
 
-    /// 是否开启画中画
-    var isPIPEnabled = true {
-        didSet { DispatchQueue.main.async { self.onPIPStateChange?(self.isPIPEnabled) } }
+    /// 当前布局模式
+    var layoutMode: LayoutMode = .pip {
+        didSet { DispatchQueue.main.async { self.onPIPStateChange?(self.layoutMode) } }
     }
 
     /// 是否交换前后摄像头（前置变全屏背景，后置变 PIP 小窗）
@@ -49,7 +49,7 @@ final class CameraViewModel {
 
     var onProcessedFrameUpdate: ((UIImage) -> Void)?
     var onRecordingStateChange: ((Bool) -> Void)?
-    var onPIPStateChange: ((Bool) -> Void)?
+    var onPIPStateChange: ((LayoutMode) -> Void)?
     var onCameraSwapChange: ((Bool) -> Void)?
 
     /// 复用的 CIContext（Metal 加速），避免每帧创建
@@ -94,23 +94,24 @@ final class CameraViewModel {
         latestBackImage = backImage
         latestFrontImage = frontImage
 
-        // 根据交换模式和 PIP 开关决定前后景关系
+        // 根据交换模式决定前后景关系，layoutMode 控制合成方式
         let foreground: CIImage?
         let background: CIImage
 
         if isCameraSwapped {
-            // 交换模式：前置全屏背景，后置 PIP 前景
+            // 交换模式：前置全屏背景，后置 PIP/分屏前景
             background = frontImage
-            foreground = isPIPEnabled ? backImage : nil
+            foreground = (layoutMode != .off) ? backImage : nil
         } else {
-            // 正常模式：后置全屏背景，前置 PIP 前景
+            // 正常模式：后置全屏背景，前置 PIP/分屏前景
             background = backImage
-            foreground = isPIPEnabled ? frontImage : nil
+            foreground = (layoutMode != .off) ? frontImage : nil
         }
 
         let processed = pipeline.processFrame(
             background: background,
             foreground: foreground,
+            mode: layoutMode,
             pipConfig: pipConfig
         )
 

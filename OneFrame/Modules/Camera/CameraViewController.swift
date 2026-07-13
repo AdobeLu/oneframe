@@ -734,14 +734,25 @@ final class CameraViewController: UIViewController {
     }
 
     @objc private func pipToggleTapped() {
-        viewModel.isPIPEnabled.toggle()
+        let nextMode = viewModel.layoutMode.next
+        viewModel.layoutMode = nextMode
 
-        let iconName = viewModel.isPIPEnabled ? "pip.enter" : "pip.exit"
-        pipToggleButton.setImage(UIImage(systemName: iconName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)), for: .normal)
-        pipToggleButton.tintColor = viewModel.isPIPEnabled ? .systemYellow : UIColor.white.withAlphaComponent(0.5)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
 
-        // PIP 关闭时隐藏小窗指示器
-        pipOverlayView.isHidden = !viewModel.isPIPEnabled
+        updateLayoutButtonAppearance(for: nextMode)
+    }
+
+    private func updateLayoutButtonAppearance(for mode: LayoutMode) {
+        let iconName = mode.sfSymbolName
+        pipToggleButton.setImage(
+            UIImage(systemName: iconName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)),
+            for: .normal
+        )
+        pipToggleButton.tintColor = mode != .off ? .systemYellow : UIColor.white.withAlphaComponent(0.5)
+
+        // PIP 小窗指示器仅在 .pip 模式下显示
+        pipOverlayView.isHidden = (mode != .pip)
     }
 
     @objc private func cameraSwitchTapped() {

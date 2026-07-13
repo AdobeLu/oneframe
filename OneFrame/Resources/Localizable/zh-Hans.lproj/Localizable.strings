@@ -22,9 +22,11 @@
 
 "purchase.title" = "高级会员";
 "purchase.member_title" = "高级会员";
-"purchase.member_subtitle" = "一次购买，永久去除「同框相机」品牌水印。";
+"purchase.member_subtitle" = "解锁全部功能，去除「同框相机」品牌水印。";
 "purchase.feature_watermark" = "去除「同框相机」品牌水印";
-"purchase.buy" = "立即购买";
+"purchase.monthly" = "包月会员";
+"purchase.yearly" = "包年会员";
+"purchase.lifetime" = "永久买断";
 "purchase.restore" = "恢复购买";
 "purchase.restoring" = "正在恢复购买...";
 "purchase.purchased" = "已购买";
@@ -32,7 +34,7 @@
 "purchase.restore_failed" = "未找到购买记录，请确认已使用同一 Apple ID 购买";
 "purchase.success_title" = "购买成功";
 "purchase.success_message" = "您已是同框相机高级会员，品牌水印已自动移除。感谢支持！";
-"purchase.legal" = "购买将记入您的 Apple ID 账户。高级会员为一次性购买，永久有效。";
+"purchase.legal" = "购买将记入您的 Apple ID 账户。订阅自动续费，可随时在系统设置中取消。";
 
 "gallery.title" = "相册";
 "gallery.empty" = "还没有任何作品，快去拍摄吧！";

@@ -22,9 +22,11 @@
 
 "purchase.title" = "OneFrame Premium";
 "purchase.member_title" = "OneFrame Premium";
-"purchase.member_subtitle" = "One-time purchase to permanently remove the OneFrame brand watermark.";
+"purchase.member_subtitle" = "Unlock all features and remove the OneFrame brand watermark.";
 "purchase.feature_watermark" = "Remove OneFrame brand watermark";
-"purchase.buy" = "Buy Now";
+"purchase.monthly" = "Monthly";
+"purchase.yearly" = "Yearly";
+"purchase.lifetime" = "Lifetime";
 "purchase.restore" = "Restore Purchase";
 "purchase.restoring" = "Restoring purchase...";
 "purchase.purchased" = "Purchased";
@@ -32,7 +34,7 @@
 "purchase.restore_failed" = "No purchase record found. Please make sure you're using the same Apple ID.";
 "purchase.success_title" = "Purchase Successful";
 "purchase.success_message" = "You are now a OneFrame Premium member. The brand watermark has been removed. Thank you for your support!";
-"purchase.legal" = "Payment will be charged to your Apple ID account. Premium membership is a one-time purchase with lifetime access.";
+"purchase.legal" = "Payment will be charged to your Apple ID account. Subscriptions auto-renew unless canceled in Settings at least 24 hours before the renewal date.";
 
 "gallery.title" = "Gallery";
 "gallery.empty" = "No media yet, start shooting!";

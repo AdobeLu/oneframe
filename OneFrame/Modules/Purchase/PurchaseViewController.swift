@@ -2,7 +2,7 @@
 //  PurchaseViewController.swift
 //  OneFrame
 //
-//  同框相机高级会员 - 内购页面
+//  同框相机高级会员 - 内购页面（包月 / 包年 / 买断）
 //
 
 import UIKit
@@ -19,51 +19,95 @@ final class PurchaseViewController: UIViewController {
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let featuresStack = UIStackView()
-    private let purchaseButton = UIButton(type: .system)
+
+    /// 三个方案按钮 + 恢复购买
+    private var planButtons: [UIButton] = []
     private let restoreButton = UIButton(type: .system)
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
     private let legalLabel = UILabel()
 
-    // 价格格式化
-    private var priceText: String?
+    /// 方案按钮容器（用于统一管理布局）
+    private let plansStack = UIStackView()
 
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
+        setupPurchaseCallback()
         loadStoreData()
     }
 
     // MARK: - Setup
 
+    /// 注册购买结果回调（异步 fire-and-forget 模式，不阻塞 UI）
+    private func setupPurchaseCallback() {
+        IAPManager.shared.onPurchaseFinished = { [weak self] in
+            guard let self = self else { return }
+            self.activityIndicator.stopAnimating()
+            self.planButtons.forEach { $0.isEnabled = true }
+
+            if IAPManager.shared.isPremium {
+                self.updateButtonStates()
+                self.showSuccessAndDismiss()
+            } else if let error = IAPManager.shared.purchaseError {
+                self.showAlert(message: error)
+            }
+            // 取消购买（isPremium=false, purchaseError=nil）→ 静默恢复
+        }
+    }
+
     private func loadStoreData() {
         activityIndicator.startAnimating()
-        purchaseButton.isEnabled = false
+        planButtons.forEach { $0.isEnabled = false }
 
-        Task {
+        Task.detached { [weak self] in
             await IAPManager.shared.loadProducts()
             await IAPManager.shared.checkEntitlements()
             await MainActor.run {
-                activityIndicator.stopAnimating()
-                updatePurchaseButtonState()
+                guard let self = self else { return }
+                self.activityIndicator.stopAnimating()
+                self.updateButtonStates()
             }
         }
     }
 
-    private func updatePurchaseButtonState() {
+    private func updateButtonStates() {
         if IAPManager.shared.isPremium {
-            purchaseButton.isEnabled = false
-            purchaseButton.setTitle(OWLocalized("purchase.purchased"), for: .normal)
-            purchaseButton.backgroundColor = .systemGreen
-        } else {
-            purchaseButton.isEnabled = true
-            if let product = IAPManager.shared.premiumProduct {
-                priceText = product.displayPrice
-                purchaseButton.setTitle("\(OWLocalized("purchase.buy")) - \(product.displayPrice)", for: .normal)
-            } else {
-                purchaseButton.setTitle(OWLocalized("purchase.buy"), for: .normal)
+            for button in planButtons {
+                button.isEnabled = false
+                button.setTitle(OWLocalized("purchase.purchased"), for: .normal)
+                button.backgroundColor = .systemGreen
             }
+        } else {
+            updatePlanButton(
+                button: planButtons[safe: 0],
+                product: IAPManager.shared.monthlyProduct,
+                fallbackKey: "purchase.monthly"
+            )
+            updatePlanButton(
+                button: planButtons[safe: 1],
+                product: IAPManager.shared.yearlyProduct,
+                fallbackKey: "purchase.yearly"
+            )
+            updatePlanButton(
+                button: planButtons[safe: 2],
+                product: IAPManager.shared.lifetimeProduct,
+                fallbackKey: "purchase.lifetime"
+            )
+        }
+    }
+
+    private func updatePlanButton(button: UIButton?, product: Product?, fallbackKey: String) {
+        guard let button = button else { return }
+        button.isEnabled = (product != nil)
+        if let product = product {
+            let title = "\(OWLocalized(fallbackKey)) - \(product.displayPrice)"
+            button.setTitle(title, for: .normal)
+            button.backgroundColor = .systemBlue
+        } else {
+            button.setTitle(OWLocalized(fallbackKey), for: .normal)
+            button.backgroundColor = .systemGray
         }
     }
 
@@ -96,7 +140,7 @@ final class PurchaseViewController: UIViewController {
             contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor)
         ])
 
-        // 图标 (会员皇冠)
+        // 图标
         iconView.image = UIImage(systemName: "crown.fill")
         iconView.tintColor = .systemYellow
         iconView.contentMode = .scaleAspectFit
@@ -130,20 +174,26 @@ final class PurchaseViewController: UIViewController {
         let featureItems: [(icon: String, text: String)] = [
             ("sparkles", OWLocalized("purchase.feature_watermark"))
         ]
-
         for (iconName, text) in featureItems {
             let row = createFeatureRow(icon: iconName, text: text)
             featuresStack.addArrangedSubview(row)
         }
 
-        // 购买按钮
-        purchaseButton.backgroundColor = .systemBlue
-        purchaseButton.setTitleColor(.white, for: .normal)
-        purchaseButton.layer.cornerRadius = 14
-        purchaseButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 18)
-        purchaseButton.addTarget(self, action: #selector(purchaseTapped), for: .touchUpInside)
-        contentView.addSubview(purchaseButton)
-        purchaseButton.translatesAutoresizingMaskIntoConstraints = false
+        // 三个方案按钮容器
+        plansStack.axis = .vertical
+        plansStack.spacing = 12
+        plansStack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(plansStack)
+
+        // 创建三个方案按钮
+        let monthlyBtn = makePlanButton(tag: 0)
+        let yearlyBtn = makePlanButton(tag: 1)
+        let lifetimeBtn = makePlanButton(tag: 2)
+
+        planButtons = [monthlyBtn, yearlyBtn, lifetimeBtn]
+        plansStack.addArrangedSubview(monthlyBtn)
+        plansStack.addArrangedSubview(yearlyBtn)
+        plansStack.addArrangedSubview(lifetimeBtn)
 
         // 恢复购买
         restoreButton.setTitle(OWLocalized("purchase.restore"), for: .normal)
@@ -169,47 +219,53 @@ final class PurchaseViewController: UIViewController {
 
         // Layout
         NSLayoutConstraint.activate([
-            // 图标
             iconView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             iconView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 40),
             iconView.widthAnchor.constraint(equalToConstant: 72),
             iconView.heightAnchor.constraint(equalToConstant: 72),
 
-            // 标题
             titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 20),
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 32),
             titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -32),
 
-            // 副标题
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
             subtitleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 32),
             subtitleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -32),
 
-            // 功能列表
             featuresStack.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 36),
             featuresStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 40),
             featuresStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -40),
 
-            // 购买按钮
-            purchaseButton.topAnchor.constraint(equalTo: featuresStack.bottomAnchor, constant: 40),
-            purchaseButton.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            purchaseButton.widthAnchor.constraint(equalTo: contentView.widthAnchor, constant: -48),
-            purchaseButton.heightAnchor.constraint(equalToConstant: 52),
+            plansStack.topAnchor.constraint(equalTo: featuresStack.bottomAnchor, constant: 32),
+            plansStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            plansStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
 
-            // 恢复购买
-            restoreButton.topAnchor.constraint(equalTo: purchaseButton.bottomAnchor, constant: 16),
+            restoreButton.topAnchor.constraint(equalTo: plansStack.bottomAnchor, constant: 16),
             restoreButton.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
 
-            // 法律声明
             legalLabel.topAnchor.constraint(equalTo: restoreButton.bottomAnchor, constant: 24),
             legalLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 32),
             legalLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -32),
 
-            // 加载指示器
             activityIndicator.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             activityIndicator.topAnchor.constraint(equalTo: legalLabel.bottomAnchor, constant: 20),
             activityIndicator.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -40)
         ])
+    }
+
+    // MARK: - Helpers
+
+    private func makePlanButton(tag: Int) -> UIButton {
+        let button = UIButton(type: .system)
+        button.backgroundColor = .systemBlue
+        button.setTitleColor(.white, for: .normal)
+        button.layer.cornerRadius = 14
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 17)
+        button.tag = tag
+        button.addTarget(self, action: #selector(planButtonTapped(_:)), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        return button
     }
 
     private func createFeatureRow(icon: String, text: String) -> UIView {
@@ -248,44 +304,39 @@ final class PurchaseViewController: UIViewController {
 
     // MARK: - Actions
 
-    @objc private func purchaseTapped() {
-        purchaseButton.isEnabled = false
-        activityIndicator.startAnimating()
-
-        Task {
-            await IAPManager.shared.purchase()
-            await MainActor.run {
-                purchaseButton.isEnabled = true
-                activityIndicator.stopAnimating()
-
-                if IAPManager.shared.isPremium {
-                    purchaseButton.setTitle(OWLocalized("purchase.purchased"), for: .normal)
-                    purchaseButton.backgroundColor = .systemGreen
-                    showSuccessAndDismiss()
-                } else if let error = IAPManager.shared.purchaseError {
-                    showAlert(message: error)
-                }
-            }
+    @objc private func planButtonTapped(_ sender: UIButton) {
+        let product: Product?
+        switch sender.tag {
+        case 0: product = IAPManager.shared.monthlyProduct
+        case 1: product = IAPManager.shared.yearlyProduct
+        case 2: product = IAPManager.shared.lifetimeProduct
+        default: return
         }
+        guard let product = product else { return }
+
+        // 🔥 fire-and-forget：不 await，购买结果通过 onPurchaseFinished 异步回调
+        //    避免 product.purchase() 内部的 StoreKit dismiss 过程阻塞主线程
+        sender.isEnabled = false
+        activityIndicator.startAnimating()
+        IAPManager.shared.purchase(product)
     }
 
     @objc private func restoreTapped() {
         restoreButton.isEnabled = false
         activityIndicator.startAnimating()
 
-        Task {
+        Task.detached { [weak self] in
             await IAPManager.shared.restorePurchases()
             await MainActor.run {
-                restoreButton.isEnabled = true
-                activityIndicator.stopAnimating()
+                guard let self = self else { return }
+                self.restoreButton.isEnabled = true
+                self.activityIndicator.stopAnimating()
 
                 if IAPManager.shared.isPremium {
-                    purchaseButton.setTitle(OWLocalized("purchase.purchased"), for: .normal)
-                    purchaseButton.backgroundColor = .systemGreen
-                    purchaseButton.isEnabled = false
-                    showSuccessAndDismiss()
+                    self.updateButtonStates()
+                    self.showSuccessAndDismiss()
                 } else {
-                    showAlert(message: OWLocalized("purchase.restore_failed"))
+                    self.showAlert(message: OWLocalized("purchase.restore_failed"))
                 }
             }
         }
@@ -308,12 +359,16 @@ final class PurchaseViewController: UIViewController {
     }
 
     private func showAlert(message: String) {
-        let alert = UIAlertController(
-            title: nil,
-            message: message,
-            preferredStyle: .alert
-        )
+        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: OWLocalized("common.ok"), style: .default))
         present(alert, animated: true)
+    }
+}
+
+// MARK: - Array safe subscript
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

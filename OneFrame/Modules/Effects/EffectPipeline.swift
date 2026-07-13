@@ -18,11 +18,11 @@ final class EffectPipeline {
 
     // MARK: - Public
 
-    /// 处理一帧: 背景(后摄) + 前景(前摄) → 滤镜 → 画框 → 水印 → 打码
-    /// foreground 为 nil 时仅处理背景画面（PIP 关闭或摄像头交换模式）
+    /// 处理一帧: 背景(后摄) + 前景(前摄) → 滤镜 → 合成 → 水印 → 打码
     func processFrame(
         background: CIImage,
         foreground: CIImage?,
+        mode: LayoutMode = .off,
         pipConfig: Compositor.PIPConfig? = nil
     ) -> CIImage {
 
@@ -30,10 +30,11 @@ final class EffectPipeline {
         let filteredBack = filterEffect.apply(to: background)
         let filteredFront = foreground.map { filterEffect.apply(to: $0) }
 
-        // 2. 合成双画面
+        // 2. 按指定模式合成双画面
         let composited = compositor.composite(
             background: filteredBack,
             foreground: filteredFront,
+            mode: mode,
             config: pipConfig
         )
 
